@@ -1,12 +1,16 @@
 import { redirect, type Handle } from '@sveltejs/kit';
 import { building } from '$app/environment';
-import { auth } from '$lib/server/auth';
+import { auth, baseURL } from '$lib/server/auth';
 import { db } from '$lib/server/db';
 import { userProfile } from '$lib/server/db/schema';
 import { eq } from 'drizzle-orm';
 import { svelteKitHandler } from 'better-auth/svelte-kit';
 
 const handleBetterAuth: Handle = async ({ event, resolve }) => {
+	if (!building && baseURL && event.url.origin !== new URL(baseURL).origin) {
+		redirect(303, new URL(event.url.pathname + event.url.search, baseURL));
+	}
+
 	const session = await auth.api.getSession({ headers: event.request.headers });
 
 	if (session) {

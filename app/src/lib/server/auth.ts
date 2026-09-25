@@ -6,7 +6,7 @@ import { getRequestEvent } from '$app/server';
 import { db } from '$lib/server/db';
 
 export const githubEnabled = Boolean(env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET);
-const baseURL =
+export const baseURL =
 	env.ORIGIN ??
 	(env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${env.VERCEL_PROJECT_PRODUCTION_URL}` : undefined);
 
