@@ -1,15 +1,27 @@
 <script lang="ts">
+	import * as Avatar from '$lib/components/ui/avatar';
 	import { atmospheres, budgets, cuisines, travelMinutes } from '$lib/onboarding';
 	import type { PageProps } from './$types';
 
-	let { form }: PageProps = $props();
+	let { data, form }: PageProps = $props();
 </script>
 
 <svelte:head><title>Your taste — Concierge</title></svelte:head>
 
 <main class="flex flex-1 items-center py-12 sm:py-16">
 	<div class="w-full max-w-3xl">
-		<p class="text-xs tracking-[0.3em] text-primary-foreground/55 uppercase">Your first page</p>
+		<div class="flex items-center gap-3">
+			<Avatar.Root class="size-12 ring-1 ring-primary-foreground/20">
+				{#if data.user?.image}<Avatar.Image src={data.user.image} alt="" />{/if}
+				<Avatar.Fallback class="text-base font-medium text-foreground">
+					{data.user?.name?.trim().charAt(0).toUpperCase() || 'G'}
+				</Avatar.Fallback>
+			</Avatar.Root>
+			<div>
+				<p class="text-xs tracking-[0.3em] text-primary-foreground/55 uppercase">Your first page</p>
+				<p class="mt-1 text-sm text-primary-foreground/80">{data.user?.name}</p>
+			</div>
+		</div>
 		<h1 class="mt-5 max-w-2xl text-[clamp(2.5rem,7vw,5rem)] leading-[1.02] tracking-tight">
 			What feels like a good night out?
 		</h1>
