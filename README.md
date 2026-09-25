@@ -2,6 +2,8 @@
 
 Restaurant reservation agent take-home, in progress.
 
+Live app: https://concierge-pearl.vercel.app
+
 The deployed app currently provides account creation, login, onboarding, and an authenticated home screen. The reservation platform integration is intentionally pending; the home screen does not claim to show live availability or accept bookings.
 
 ## Architecture
