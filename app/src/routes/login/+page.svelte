@@ -103,7 +103,7 @@
 				<Passport {credential} {identity} {submitAction} {options} />
 			</form>
 			{#if data.githubEnabled}
-				<form id="github-sign-in" method="post" action="?/signInSocial" use:enhance></form>
+				<form id="github-sign-in" method="post" action="?/signInSocial"></form>
 			{/if}
 		</div>
 	</section>
