@@ -93,7 +93,7 @@
 {/snippet}
 
 <main
-	class="login-page grid min-h-screen grid-cols-[minmax(0,1fr)] bg-primary text-primary-foreground lg:grid-cols-2"
+	class="dark login-page grid min-h-screen grid-cols-[minmax(0,1fr)] bg-primary text-primary-foreground lg:grid-cols-2"
 >
 	<section
 		class="order-last flex flex-col px-6 pt-6 pb-12 sm:px-12 lg:order-first lg:min-h-screen lg:px-16 lg:py-6 xl:px-24"
