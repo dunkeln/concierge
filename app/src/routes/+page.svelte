@@ -240,7 +240,7 @@
 				</Message.Root>
 			{:else}
 				<div class="my-auto w-full space-y-5">
-					<div class="mx-auto flex w-full max-w-2xl snap-x gap-3 overflow-x-auto pb-2">
+					<div class="scene-rail mx-auto flex w-full max-w-2xl snap-x gap-3 overflow-x-auto pb-2">
 						{#each sceneCards as scene (scene.atmosphere)}
 							<button
 								type="button"
@@ -336,6 +336,13 @@
 </main>
 
 <style>
+	.scene-rail {
+		scrollbar-width: none;
+	}
+	.scene-rail::-webkit-scrollbar {
+		display: none;
+	}
+
 	@supports (animation-timeline: view(inline)) {
 		@media (prefers-reduced-motion: no-preference) {
 			.scene-card {
