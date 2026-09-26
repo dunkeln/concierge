@@ -68,7 +68,7 @@
 
 {#snippet submitAction()}
 	<button
-		class="submit-action"
+		class="submit-action rounded-lg"
 		type="submit"
 		aria-label={registering ? 'Create account' : 'Sign in'}
 	>
@@ -255,7 +255,6 @@
 		min-width: 2.75rem;
 		align-items: center;
 		justify-content: center;
-		border-radius: 50%;
 		background: transparent;
 		cursor: pointer;
 	}

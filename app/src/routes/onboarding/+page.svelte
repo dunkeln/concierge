@@ -68,7 +68,7 @@
 								checked={minutes === 30}
 							/>
 							<span
-								class="inline-flex min-h-11 cursor-pointer items-center rounded-full border border-primary-foreground/30 px-4 text-sm transition-colors peer-checked:bg-primary-foreground peer-checked:text-primary peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-primary-foreground hover:border-primary-foreground/70"
+								class="inline-flex min-h-11 cursor-pointer items-center rounded-lg border border-primary-foreground/30 px-4 text-sm transition-colors peer-checked:bg-primary-foreground peer-checked:text-primary peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-primary-foreground hover:border-primary-foreground/70"
 								>{minutes} min</span
 							>
 						</label>
@@ -78,7 +78,7 @@
 
 			{#if form?.message}<p role="alert" class="text-sm text-red-400">{form.message}</p>{/if}
 			<button
-				class="min-h-12 rounded-full bg-primary-foreground px-6 font-medium text-primary transition-transform active:scale-95"
+				class="min-h-12 rounded-lg bg-primary-foreground px-6 font-medium text-primary transition-transform active:scale-95"
 				>Continue <span aria-hidden="true">→</span></button
 			>
 		</form>
