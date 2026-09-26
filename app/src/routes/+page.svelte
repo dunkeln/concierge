@@ -16,14 +16,18 @@
 		Lively: 'Celebrate',
 		Intimate: 'Date night',
 		Casual: 'Take it easy',
-		Adventurous: 'Try somewhere new'
+		Adventurous: 'Try somewhere new',
+		Brunch: 'Weekend brunch',
+		Coffee: 'Coffee catch-up'
 	};
 	const sceneImages: Record<(typeof scenarios)[number]['atmosphere'], string> = {
 		Quiet: '/editorial/dinner-table-v2.png',
 		Lively: '/editorial/lively-night.png',
 		Intimate: '/editorial/intimate-night.png',
 		Casual: '/editorial/casual-night.png',
-		Adventurous: '/editorial/restaurant-arrival-v2.png'
+		Adventurous: '/editorial/restaurant-arrival-v2.png',
+		Brunch: '/editorial/weekend-brunch.png',
+		Coffee: '/editorial/coffee-catch-up.png'
 	};
 	let sceneCards = $derived(
 		[
@@ -188,7 +192,7 @@
 								</div>
 							{/if}
 							<select
-								aria-label="Select a restaurant from map results"
+								aria-label="Select a place from map results"
 								class="mx-3 max-w-full rounded-lg border border-primary-foreground/25 bg-secondary px-3 py-2 text-xs text-primary-foreground"
 								value={selectedPlace?.id ?? ''}
 								onchange={(event) => {
@@ -196,7 +200,7 @@
 									selectedPlace = place ? { id: place.id, name: place.name } : null;
 								}}
 							>
-								<option value="">Select a restaurant</option>
+								<option value="">Select a place</option>
 								{#each places as place, index (`${place.id}-${index}`)}
 									<option value={place.id}>{place.name}</option>
 								{/each}
@@ -236,19 +240,13 @@
 				</Message.Root>
 			{:else}
 				<div class="my-auto w-full space-y-5">
-					<div class="text-center">
-						<p class="text-xs tracking-[0.2em] text-primary-foreground/45 uppercase">
-							Your kind of night
-						</p>
-						<h1 class="mt-2 text-xl font-medium text-primary-foreground">Where shall we go?</h1>
-					</div>
 					<div class="mx-auto flex w-full max-w-2xl snap-x gap-3 overflow-x-auto pb-2">
 						{#each sceneCards as scene (scene.atmosphere)}
 							<button
 								type="button"
 								class="relative aspect-[4/5] w-44 flex-none snap-start overflow-hidden rounded-2xl border border-primary-foreground/15 bg-secondary text-left transition-transform hover:-translate-y-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-foreground active:translate-y-0 sm:w-[calc((100%-1.5rem)/3)]"
 								onclick={() => {
-									input = `${scene.title}. Help me find a restaurant.`;
+									input = `${scene.title}. Help me find a place and check if I can reserve it.`;
 									messageField?.focus();
 								}}
 							>
@@ -268,9 +266,6 @@
 							</button>
 						{/each}
 					</div>
-					<p class="text-center text-xs text-primary-foreground/50">
-						Pick a scene or tell me your own plan.
-					</p>
 				</div>
 			{/each}
 			{#if chat.status === 'submitted'}
@@ -325,7 +320,7 @@
 				bind:this={messageField}
 				bind:value={input}
 				rows="2"
-				placeholder="Table for two in the West Village on Friday, 7–9pm…"
+				placeholder="Coffee, brunch, or dinner—where, when, and for how many?"
 				class="min-h-12 flex-1 resize-none border-0 bg-transparent text-sm text-primary-foreground placeholder:text-primary-foreground/45 focus:ring-0"
 				disabled={!data.chatConfigured}></textarea>
 			<button

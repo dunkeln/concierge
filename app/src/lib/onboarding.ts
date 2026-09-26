@@ -7,7 +7,7 @@ export const scenarios = [
 	},
 	{
 		atmosphere: 'Lively',
-		title: 'A night that feels like a celebration',
+		title: 'A celebration worth going out for',
 		detail: 'Energy, friends, and one more round.'
 	},
 	{
@@ -24,6 +24,16 @@ export const scenarios = [
 		atmosphere: 'Adventurous',
 		title: 'Surprise me with somewhere new',
 		detail: 'A place I might not pick myself.'
+	},
+	{
+		atmosphere: 'Brunch',
+		title: 'A long weekend brunch',
+		detail: 'Good food and no need to rush.'
+	},
+	{
+		atmosphere: 'Coffee',
+		title: 'Coffee and a proper catch-up',
+		detail: 'A café where we can settle in.'
 	}
 ] as const;
 export const travelMinutes = [15, 30, 60] as const;

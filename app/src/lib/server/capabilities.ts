@@ -55,13 +55,16 @@ async function mapboxCall(name: string, args: Record<string, unknown>) {
 	return { features: result.features, attribution: result.attribution };
 }
 
-async function mapboxSearch(area: unknown) {
+async function mapboxSearch(area: unknown, kind: unknown = 'restaurant') {
 	if (typeof area !== 'string' || area.trim().length < 3 || area.length > 100) {
 		return { error: 'Provide a neighborhood or city name (up to 100 characters).' };
 	}
 	const name = area.trim();
 	if (/\b\d{1,6}\s+[a-z]/i.test(name) || /[-+]?\d+(?:\.\d+)?\s*,\s*[-+]?\d+(?:\.\d+)?/.test(name)) {
 		return { error: 'Use a public neighborhood or city, not a street address or coordinates.' };
+	}
+	if (kind !== 'restaurant' && kind !== 'cafe') {
+		return { error: 'Choose restaurant or cafe.' };
 	}
 	if (!env.MAPBOX_ACCESS_TOKEN) return { error: 'Mapbox search is not configured.' };
 
@@ -77,7 +80,7 @@ async function mapboxSearch(area: unknown) {
 		}
 		const bbox = location.properties?.bbox;
 		const result = await mapboxCall('category_search_tool', {
-			category: 'restaurant',
+			category: kind === 'cafe' ? 'coffee' : 'restaurant',
 			limit: 25,
 			proximity: { longitude: center[0], latitude: center[1] },
 			...(bbox?.length === 4 && bbox.every(Number.isFinite)
@@ -130,10 +133,11 @@ async function mapboxSearch(area: unknown) {
 export const capabilities: Record<string, Capability> = {
 	'reservations.find': {
 		description:
-			'Find reservation pages for a named restaurant, or search a public area directly as a fallback. A matching SevenRooms page may show expanded times for a specified date and party size. No booking is made.',
+			'Find reservation pages for a named restaurant or café, or search a public area directly as a fallback. A matching SevenRooms page may show expanded times for a specified date and party size. Many cafés have no reservation inventory. No booking is made.',
 		input: {
-			restaurant: 'Restaurant name from places.search, if known',
+			restaurant: 'Restaurant or café name from places.search, if known',
 			area: 'Public neighborhood and city, such as West Village, New York City',
+			kind: 'restaurant or cafe; defaults to restaurant',
 			date: 'Optional requested date as YYYY-MM-DD',
 			partySize: 'Optional number of guests, 1–12'
 		},
@@ -144,11 +148,12 @@ export const capabilities: Record<string, Capability> = {
 	},
 	'places.search': {
 		description:
-			'Find restaurants in a named neighborhood or city using Mapbox. Does not show reservation availability.',
+			'Find restaurants or cafés in a named neighborhood or city using Mapbox. Does not show reservation availability.',
 		input: {
-			area: 'Public neighborhood and city, such as West Village, New York City; no private addresses'
+			area: 'Public neighborhood and city, such as West Village, New York City; no private addresses',
+			kind: 'restaurant or cafe; defaults to restaurant'
 		},
-		run: ({ area }) => mapboxSearch(area)
+		run: ({ area, kind }) => mapboxSearch(area, kind)
 	},
 	'clock.now': {
 		description: 'Get the current date and time in an IANA timezone.',

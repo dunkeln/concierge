@@ -22,7 +22,7 @@
 			</div>
 		</div>
 		<h1 class="mt-5 max-w-2xl text-[clamp(2.5rem,7vw,5rem)] leading-[1.02] tracking-tight">
-			What feels like a good night out?
+			What sounds like a good plan?
 		</h1>
 		<p class="mt-5 max-w-xl text-base leading-relaxed text-primary-foreground/65">
 			Which plans sound like you? Pick one or two. We’ll use them as a starting point, and you can
@@ -32,7 +32,7 @@
 		<form method="POST" class="mt-10 space-y-9">
 			<fieldset>
 				<legend class="mb-3 text-sm font-medium"
-					>Picture a good night <span class="text-primary-foreground/55">· choose up to 2</span
+					>Picture a good outing <span class="text-primary-foreground/55">· choose up to 2</span
 					></legend
 				>
 				<div class="grid gap-3 sm:grid-cols-2">

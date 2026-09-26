@@ -6,7 +6,8 @@ A signed-in user describes a restaurant reservation in chat. Concierge finds rea
 
 ## First slice
 
-- Support one reservation platform end to end. SevenRooms is the current integration target; Mapbox supplies restaurant discovery only, never availability.
+- Support one reservation platform end to end. SevenRooms is the current integration target; Mapbox supplies restaurant and café discovery only, never availability.
+- Include café reservation requests when the provider has inventory; a café listing alone is not bookable.
 - Accept a named restaurant or a public neighborhood, date, party size, and optional time window. Ask for a missing detail only when it blocks a reliable search or booking.
 - Search actual reservation inventory. Show every time exposed for the selected filters, including times behind expansion or pagination. Associate each time with its restaurant, date, party size, platform, and check time.
 - Distinguish verified availability from candidate restaurant links, partial results, and unavailable searches. Never infer open times from map data or page titles.

@@ -15,6 +15,14 @@ Record a new entry only when a failure or limitation is observed and useful to r
 
 ## Entries
 
+### 2026-09-26 — Empty chat framed every outing as dinner
+
+- Evidence: The home screen said “Your kind of night,” and its cards and composer prompt only suggested dinner, despite the requested coffee use case.
+- Cause: The initial scene set modeled five dinner moods and the place tool fixed Mapbox's restaurant category.
+- Change: Remove the extra home copy, add coffee and brunch scenes, and allow a bounded café category in place and reservation searches.
+- Verification: The local home showed daytime cards; a live Mapbox coffee category call returned café results; `bun run check` passed.
+- Remaining limit: A café listing does not establish that it takes reservations; a SevenRooms café booking path has not been demonstrated.
+
 ### 2026-09-26 — Empty chat scenes were one cropped image and one visible card
 
 - Evidence: The first local implementation used a five-panel image with CSS offsets; the signed-in user saw only one card because onboarding had one selected scenario.

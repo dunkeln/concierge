@@ -4,6 +4,7 @@ import * as Sentry from '@sentry/sveltekit';
 type ReservationQuery = {
 	restaurant?: unknown;
 	area?: unknown;
+	kind?: unknown;
 	date?: unknown;
 	partySize?: unknown;
 };
@@ -19,7 +20,10 @@ export async function findReservationPages(
 			? restaurantInput.slice(0, -area.length - 2).trim()
 			: restaurantInput;
 	if ((!restaurant && !area) || restaurantInput.length > 100 || area.length > 100) {
-		return { error: 'Provide a restaurant or public neighborhood/city (up to 100 characters).' };
+		return { error: 'Provide a venue or public neighborhood/city (up to 100 characters).' };
+	}
+	if (input.kind !== undefined && input.kind !== 'restaurant' && input.kind !== 'cafe') {
+		return { error: 'Choose restaurant or cafe.' };
 	}
 	if (
 		input.date !== undefined &&
@@ -42,7 +46,13 @@ export async function findReservationPages(
 	const browserbaseKey = keys.browserbase;
 
 	try {
-		const query = [restaurant, area, 'restaurant reservations'].filter(Boolean).join(' ');
+		const query = [
+			restaurant,
+			area,
+			input.kind === 'cafe' ? 'cafe reservations' : 'restaurant reservations'
+		]
+			.filter(Boolean)
+			.join(' ');
 		if (query.length > 160) return { error: 'Shorten the restaurant or area name.' };
 		const platformResults = restaurant
 			? await Sentry.startSpan({ name: 'browserbase.search.sevenrooms', op: 'http.client' }, () =>
