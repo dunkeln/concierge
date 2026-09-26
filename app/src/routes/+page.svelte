@@ -33,7 +33,7 @@
 		[
 			...scenarios.filter(({ atmosphere }) => data.atmospheres.includes(atmosphere)),
 			...scenarios.toReversed().filter(({ atmosphere }) => !data.atmospheres.includes(atmosphere))
-		].slice(0, 3)
+		]
 	);
 	let messageField: HTMLTextAreaElement;
 	let selectedPlace = $state<{ id: string; name: string } | null>(null);

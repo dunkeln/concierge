@@ -27,8 +27,8 @@ Record a new entry only when a failure or limitation is observed and useful to r
 
 - Evidence: The first local implementation used a five-panel image with CSS offsets; the signed-in user saw only one card because onboarding had one selected scenario.
 - Cause: Image packing and a strict selected-scenarios filter made the scene UI less flexible than the intended small visual set.
-- Change: Use individual image files per scene and fill the rail to three cards, with onboarding choices first.
-- Verification: The local home rendered three separate cards with distinct images; `bun run check` passed.
+- Change: Use individual image files per scene and show all scenes in the carousel, with onboarding choices first. A three-card limit was removed after it hid the remaining choices.
+- Verification: The local home exposed all seven separate cards in the carousel; `bun run check` passed.
 - Remaining limit: The extra scenes are editorial choices, not inferred restaurant matches or live availability.
 
 ### 2026-09-26 — Home composer did not visibly read as a squircle
