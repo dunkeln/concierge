@@ -4,15 +4,15 @@ Restaurant reservation agent take-home, in progress.
 
 Live app: https://concierge-pearl.vercel.app
 
-The deployed app currently provides account creation, login, onboarding, and an authenticated home screen. The reservation platform integration is intentionally pending; the home screen does not claim to show live availability or accept bookings.
+The app provides account creation, login, onboarding, and an authenticated chat. Reservation page inspection is read-only; the app does not claim to book tables.
 
 ## Architecture
 
 - SvelteKit handles the UI, form actions, and session checks.
 - Better Auth stores users and sessions in a dedicated Neon Postgres project.
 - Drizzle defines the authentication and onboarding schema in `app/src/lib/server/db/`.
-- Vercel hosts the app. The browser never receives database credentials.
-- Locally, Mapbox discovers restaurants. Browserbase Search finds reservation pages, and Stagehand reads visible SevenRooms page controls through a hosted browser. OpenRouter supplies Stagehand's extraction model.
+- Vercel builds `app/` from pushes to the GitHub `mucho` branch. The browser never receives database credentials.
+- Mapbox discovers restaurants. Browserbase Search finds reservation pages, and Stagehand reads visible SevenRooms page controls through a hosted browser. OpenRouter supplies Stagehand's extraction model.
 
 ## Run locally
 
@@ -27,6 +27,6 @@ bun run dev
 
 ## Scope and cuts
 
-Reservation page discovery and read-only inspection are in progress locally. A matching SevenRooms page can show visible times after setting a requested date and party size. Complete time lists, booking, and proof of a booking attempt are still open. The deployed app has not been updated with this work.
+Reservation page discovery and read-only inspection are in progress. A matching SevenRooms page can show visible times after setting a requested date and party size. Complete time lists, booking, and proof of a booking attempt are still open.
 
 AI tools used: Codex for code migration, implementation, review, and runtime checks; Svelte MCP for framework documentation and component diagnostics; iOS design skills for mobile layout and interaction guidance.
