@@ -1,14 +1,14 @@
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions } from './$types';
 import type { PageServerLoad } from './$types';
-import { auth, githubEnabled } from '$lib/server/auth';
+import { auth, appleEnabled, githubEnabled, googleEnabled } from '$lib/server/auth';
 import { APIError } from 'better-auth/api';
 
 export const load: PageServerLoad = (event) => {
 	if (event.locals.user) {
 		return redirect(302, '/');
 	}
-	return { githubEnabled };
+	return { githubEnabled, googleEnabled, appleEnabled };
 };
 
 export const actions: Actions = {
@@ -58,11 +58,15 @@ export const actions: Actions = {
 
 		return redirect(303, '/');
 	},
-	signInSocial: async () => {
-		if (!githubEnabled) return fail(400, { message: 'GitHub sign-in is not configured' });
+	signInSocial: async (event) => {
+		const provider = (await event.request.formData()).get('provider');
+		if (provider !== 'github' && provider !== 'google' && provider !== 'apple')
+			return fail(400, { message: 'Unknown sign-in provider' });
+		if (!{ github: githubEnabled, google: googleEnabled, apple: appleEnabled }[provider])
+			return fail(400, { message: 'Sign-in provider is not configured' });
 		const result = await auth.api.signInSocial({
 			body: {
-				provider: 'github',
+				provider,
 				callbackURL: '/'
 			}
 		});

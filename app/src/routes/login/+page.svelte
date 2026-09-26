@@ -89,11 +89,21 @@
 				Continue with GitHub <span aria-hidden="true">→</span>
 			</button>
 		{/if}
+		{#if data.googleEnabled}
+			<button class="social-action" type="submit" form="google-sign-in">
+				Continue with Google <span aria-hidden="true">→</span>
+			</button>
+		{/if}
+		{#if data.appleEnabled}
+			<button class="social-action" type="submit" form="apple-sign-in">
+				Continue with Apple <span aria-hidden="true">→</span>
+			</button>
+		{/if}
 	</div>
 {/snippet}
 
 <main
-	class="dark login-page grid min-h-screen grid-cols-[minmax(0,1fr)] bg-primary text-primary-foreground lg:grid-cols-2"
+	class="login-page grid min-h-screen grid-cols-[minmax(0,1fr)] bg-primary text-primary-foreground lg:grid-cols-2"
 >
 	<section
 		class="order-last flex flex-col px-6 pt-6 pb-12 sm:px-12 lg:order-first lg:min-h-screen lg:px-16 lg:py-6 xl:px-24"
@@ -103,7 +113,19 @@
 				<Passport {credential} {identity} {submitAction} {options} />
 			</form>
 			{#if data.githubEnabled}
-				<form id="github-sign-in" method="post" action="?/signInSocial"></form>
+				<form id="github-sign-in" method="post" action="?/signInSocial">
+					<input type="hidden" name="provider" value="github" />
+				</form>
+			{/if}
+			{#if data.googleEnabled}
+				<form id="google-sign-in" method="post" action="?/signInSocial">
+					<input type="hidden" name="provider" value="google" />
+				</form>
+			{/if}
+			{#if data.appleEnabled}
+				<form id="apple-sign-in" method="post" action="?/signInSocial">
+					<input type="hidden" name="provider" value="apple" />
+				</form>
 			{/if}
 		</div>
 	</section>

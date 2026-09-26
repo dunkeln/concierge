@@ -11,15 +11,14 @@
 <main class="flex flex-1 items-center py-12 sm:py-16">
 	<div class="w-full max-w-3xl">
 		<div class="flex items-center gap-3">
-			<Avatar.Root class="size-12 ring-1 ring-primary-foreground/20">
+			<Avatar.Root class="size-12 ring-1 ring-primary-foreground/20" aria-hidden="true">
 				{#if data.user?.image}<Avatar.Image src={data.user.image} alt="" />{/if}
-				<Avatar.Fallback class="text-base font-medium text-foreground">
+				<Avatar.Fallback class="bg-primary-foreground text-base font-medium text-primary">
 					{data.user?.name?.trim().charAt(0).toUpperCase() || 'G'}
 				</Avatar.Fallback>
 			</Avatar.Root>
 			<div>
 				<p class="text-xs tracking-[0.3em] text-primary-foreground/55 uppercase">Your first page</p>
-				<p class="mt-1 text-sm text-primary-foreground/80">{data.user?.name}</p>
 			</div>
 		</div>
 		<h1 class="mt-5 max-w-2xl text-[clamp(2.5rem,7vw,5rem)] leading-[1.02] tracking-tight">

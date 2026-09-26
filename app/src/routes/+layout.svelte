@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
+	import * as Avatar from '$lib/components/ui/avatar';
 	import './layout.css';
 	import type { LayoutProps } from './$types';
 
@@ -10,13 +11,27 @@
 {#if page.url.pathname === '/login'}
 	{@render children()}
 {:else}
-	<div class="min-h-dvh bg-primary text-primary-foreground">
-		<div class="mx-auto flex min-h-dvh max-w-5xl flex-col px-5 sm:px-8">
-			<header class="flex items-center justify-between border-b border-primary-foreground/15 py-5">
+	<div
+		class="min-h-dvh bg-primary text-primary-foreground"
+		class:h-dvh={page.url.pathname === '/'}
+		class:overflow-hidden={page.url.pathname === '/'}
+	>
+		<div
+			class="mx-auto flex min-h-dvh max-w-5xl flex-col px-5 sm:px-8"
+			class:h-dvh={page.url.pathname === '/'}
+		>
+			<header class="flex shrink-0 items-center justify-between py-5">
 				<a href={resolve('/')} class="text-lg tracking-wide">concierge</a>
 				{#if data.user}
 					<details class="relative">
-						<summary class="cursor-pointer text-sm">{data.user.name}</summary>
+						<summary aria-label="Account" class="flex cursor-pointer list-none items-center text-sm">
+							<Avatar.Root class="size-9 ring-1 ring-primary-foreground/20" aria-hidden="true">
+								{#if data.user.image}<Avatar.Image src={data.user.image} alt="" />{/if}
+								<Avatar.Fallback class="bg-primary-foreground text-xs font-medium text-primary">
+									{data.user.name.trim().charAt(0).toUpperCase() || 'G'}
+								</Avatar.Fallback>
+							</Avatar.Root>
+						</summary>
 						<div
 							class="absolute top-full right-0 z-10 mt-3 min-w-48 rounded-lg border border-primary-foreground/20 bg-primary p-4 shadow-xl"
 						>

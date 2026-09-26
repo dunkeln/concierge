@@ -1,0 +1,6 @@
+[mcp_servers.sentry]
+url = "https://mcp.sentry.dev/mcp/concierge-vn/javascript-sveltekit"
+
+[agents.failure_scout]
+description = "Read-only triage of a Concierge Sentry issue, failed request, or slow trace; report evidence and likely bottleneck."
+config_file = "agents/failure-scout.toml"

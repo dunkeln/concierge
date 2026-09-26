@@ -1,10 +1,15 @@
+import { sentrySvelteKit } from '@sentry/sveltekit/vite';
 import tailwindcss from '@tailwindcss/vite';
-import adapter from '@sveltejs/adapter-auto';
+import adapter from '@sveltejs/adapter-vercel';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 
 export default defineConfig({
 	plugins: [
+		sentrySvelteKit({
+			org: 'concierge-vn',
+			project: 'javascript-sveltekit'
+		}),
 		tailwindcss(),
 		sveltekit({
 			compilerOptions: {
@@ -12,11 +17,11 @@ export default defineConfig({
 				runes: ({ filename }) =>
 					filename.split(/[/\\]/).includes('node_modules') ? undefined : true
 			},
-
-			// adapter-auto only supports some environments, see https://svelte.dev/docs/kit/adapter-auto for a list.
-			// If your environment is not supported, or you settled on a specific environment, switch out the adapter.
-			// See https://svelte.dev/docs/kit/adapters for more information about adapters.
-			adapter: adapter(),
+			adapter: adapter({ runtime: 'nodejs24.x' }),
+			experimental: {
+				instrumentation: { server: true },
+				tracing: { server: true }
+			},
 
 			typescript: {
 				config: (config) => {
