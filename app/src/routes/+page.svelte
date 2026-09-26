@@ -244,7 +244,7 @@
 						{#each sceneCards as scene (scene.atmosphere)}
 							<button
 								type="button"
-								class="relative aspect-[4/5] w-44 flex-none snap-start overflow-hidden rounded-2xl border border-primary-foreground/15 bg-secondary text-left transition-transform hover:-translate-y-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-foreground active:translate-y-0 sm:w-[calc((100%-1.5rem)/3)]"
+								class="scene-card relative aspect-[4/5] w-44 flex-none snap-start overflow-hidden rounded-2xl border border-primary-foreground/15 bg-secondary text-left transition-transform hover:-translate-y-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-foreground active:translate-y-0 sm:w-[calc((100%-1.5rem)/3)]"
 								onclick={() => {
 									input = `${scene.title}. Help me find a place and check if I can reserve it.`;
 									messageField?.focus();
@@ -253,7 +253,7 @@
 								<img
 									src={sceneImages[scene.atmosphere]}
 									alt=""
-									class="absolute inset-0 size-full object-cover"
+									class="scene-image absolute inset-0 size-full object-cover"
 								/>
 								<span
 									class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent px-4 pt-12 pb-4"
@@ -334,3 +334,28 @@
 		</form>
 	</div>
 </main>
+
+<style>
+	@supports (animation-timeline: view(inline)) {
+		@media (prefers-reduced-motion: no-preference) {
+			.scene-card {
+				view-timeline-name: --scene;
+				view-timeline-axis: inline;
+			}
+			.scene-image {
+				animation: scene-parallax linear both;
+				animation-timeline: --scene;
+				animation-range: cover 0% cover 100%;
+			}
+		}
+	}
+
+	@keyframes scene-parallax {
+		from {
+			transform: translateX(-5%) scale(1.1);
+		}
+		to {
+			transform: translateX(5%) scale(1.1);
+		}
+	}
+</style>
