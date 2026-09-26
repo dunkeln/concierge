@@ -14,9 +14,46 @@ type MapboxFeature = {
 		mapbox_id?: string;
 		name?: string;
 		full_address?: string;
+		place_formatted?: string;
+		bbox?: number[];
 		poi_category?: string[];
 	};
 };
+
+async function mapboxCall(name: string, args: Record<string, unknown>) {
+	const response = await Sentry.startSpan({ name: `mapbox.${name}`, op: 'http.client' }, () =>
+		fetch('https://mcp.mapbox.com/mcp', {
+			method: 'POST',
+			headers: {
+				authorization: `Bearer ${env.MAPBOX_ACCESS_TOKEN}`,
+				accept: 'application/json, text/event-stream',
+				'content-type': 'application/json'
+			},
+			body: JSON.stringify({
+				jsonrpc: '2.0',
+				id: 1,
+				method: 'tools/call',
+				params: { name, arguments: args }
+			}),
+			signal: AbortSignal.timeout(12_000)
+		})
+	);
+	if (!response.ok) throw new Error('Mapbox request failed.');
+	const body = await response.text();
+	const data = response.headers.get('content-type')?.includes('text/event-stream')
+		? JSON.parse(
+				body
+					.split(/\r?\n/)
+					.find((line) => line.startsWith('data: '))
+					?.slice(6) ?? ''
+			)
+		: JSON.parse(body);
+	if (data.error || data.result?.isError) throw new Error('Mapbox search failed.');
+	const result = data.result?.structuredContent as
+		{ features?: MapboxFeature[]; attribution?: string } | undefined;
+	if (!Array.isArray(result?.features)) throw new Error('Invalid Mapbox response.');
+	return { features: result.features, attribution: result.attribution };
+}
 
 async function mapboxSearch(area: unknown) {
 	if (typeof area !== 'string' || area.trim().length < 3 || area.length > 100) {
@@ -29,43 +66,39 @@ async function mapboxSearch(area: unknown) {
 	if (!env.MAPBOX_ACCESS_TOKEN) return { error: 'Mapbox search is not configured.' };
 
 	try {
-		const response = await Sentry.startSpan({ name: 'mapbox.mcp', op: 'http.client' }, () =>
-			fetch('https://mcp.mapbox.com/mcp', {
-				method: 'POST',
-				headers: {
-					authorization: `Bearer ${env.MAPBOX_ACCESS_TOKEN}`,
-					accept: 'application/json, text/event-stream',
-					'content-type': 'application/json'
-				},
-				body: JSON.stringify({
-					jsonrpc: '2.0',
-					id: 1,
-					method: 'tools/call',
-					params: {
-						name: 'search_and_geocode_tool',
-						arguments: { q: `restaurants in ${name}`, types: ['poi'], poi_category: ['restaurant'] }
+		const areaResult = await mapboxCall('search_and_geocode_tool', {
+			q: name,
+			types: ['neighborhood', 'locality', 'place', 'city']
+		});
+		const location = areaResult.features[0];
+		const center = location?.geometry?.coordinates;
+		if (!center || !Number.isFinite(center[0]) || !Number.isFinite(center[1])) {
+			return { error: 'Area not found.' };
+		}
+		const bbox = location.properties?.bbox;
+		const result = await mapboxCall('category_search_tool', {
+			category: 'restaurant',
+			limit: 25,
+			proximity: { longitude: center[0], latitude: center[1] },
+			...(bbox?.length === 4 && bbox.every(Number.isFinite)
+				? {
+						bbox: {
+							minLongitude: bbox[0],
+							minLatitude: bbox[1],
+							maxLongitude: bbox[2],
+							maxLatitude: bbox[3]
+						}
 					}
-				}),
-				signal: AbortSignal.timeout(12_000)
-			})
-		);
-		if (!response.ok) throw new Error('Mapbox request failed.');
-		const body = await response.text();
-		const data = response.headers.get('content-type')?.includes('text/event-stream')
-			? JSON.parse(
-					body
-						.split(/\r?\n/)
-						.find((line) => line.startsWith('data: '))
-						?.slice(6) ?? ''
-				)
-			: JSON.parse(body);
-		if (data.error || data.result?.isError) throw new Error('Mapbox search failed.');
-		const result = data.result?.structuredContent as
-			{ features?: MapboxFeature[]; attribution?: string } | undefined;
-		if (!Array.isArray(result?.features)) throw new Error('Invalid Mapbox response.');
+				: {})
+		});
 		const places = result.features.flatMap((feature) => {
 			const coordinates = feature.geometry?.coordinates;
-			const { mapbox_id: id, name: placeName, full_address: address } = feature.properties ?? {};
+			const {
+				mapbox_id: id,
+				name: placeName,
+				full_address: address,
+				poi_category: categories
+			} = feature.properties ?? {};
 			if (
 				!id ||
 				!placeName ||
@@ -74,11 +107,15 @@ async function mapboxSearch(area: unknown) {
 				!Number.isFinite(coordinates[1])
 			)
 				return [];
-			return [{ id, name: placeName, address, lon: coordinates[0], lat: coordinates[1] }];
+			return [
+				{ id, name: placeName, address, categories, lon: coordinates[0], lat: coordinates[1] }
+			];
 		});
 		Sentry.getActiveSpan()?.setAttribute('places.result_count', places.length);
 		return {
-			area: name,
+			area: [location.properties?.name, location.properties?.place_formatted]
+				.filter(Boolean)
+				.join(', '),
 			places,
 			attribution: result.attribution ?? '© Mapbox and its suppliers',
 			availability: 'Not provided by Mapbox'
@@ -93,7 +130,7 @@ async function mapboxSearch(area: unknown) {
 export const capabilities: Record<string, Capability> = {
 	'reservations.find': {
 		description:
-			'Find reservation pages for a named restaurant from Mapbox, or search a public area directly as a fallback. A matching SevenRooms page may show visible times after setting date and party size. Results are incomplete and no booking is made.',
+			'Find reservation pages for a named restaurant, or search a public area directly as a fallback. A matching SevenRooms page may show expanded times for a specified date and party size. No booking is made.',
 		input: {
 			restaurant: 'Restaurant name from places.search, if known',
 			area: 'Public neighborhood and city, such as West Village, New York City',
@@ -102,8 +139,7 @@ export const capabilities: Record<string, Capability> = {
 		},
 		run: (input) =>
 			findReservationPages(input, {
-				browserbase: env.BROWSERBASE_API_KEY,
-				openrouter: env.OPENROUTER_API_KEY
+				browserbase: env.BROWSERBASE_API_KEY
 			})
 	},
 	'places.search': {

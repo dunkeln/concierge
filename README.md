@@ -25,8 +25,14 @@ bun run db:push
 bun run dev
 ```
 
+## Local checks
+
+In another terminal, run `bun run test:auth`, sign in with your own local account, complete onboarding if prompted, then stop the recorder with Ctrl+C. This saves a git-ignored Playwright session. Run `bun run test:e2e` to check the chat calendar and selected-slot payload with a mocked chat response. No reservation provider is called.
+
+Run `bun run eval:local` for two Braintrust cases using synthetic provider evidence and the configured OpenRouter model. It scores visible-time grounding and invented booking claims; `--no-send-logs` keeps the evaluation results local. This does not test a live reservation page or completed booking.
+
 ## Scope and cuts
 
-Reservation page discovery and read-only inspection are in progress. A matching SevenRooms page can show visible times after setting a requested date and party size. Complete time lists, booking, and proof of a booking attempt are still open.
+Reservation page discovery and read-only inspection are in progress. A matching SevenRooms page can show visible times after setting a requested date and party size. [A manual SevenRooms checkout attempt](proof/README.md) reached the payment gate and stopped there. Complete time lists and an agent-driven booking attempt are still open.
 
 AI tools used: Codex for code migration, implementation, review, and runtime checks; Svelte MCP for framework documentation and component diagnostics; iOS design skills for mobile layout and interaction guidance.

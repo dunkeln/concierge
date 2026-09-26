@@ -60,6 +60,54 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 	) {
 		error(400, 'Invalid conversation.');
 	}
+	const selection = (payload as { selectedPlace?: unknown }).selectedPlace;
+	let selectedPlace: { id: string; name: string } | null = null;
+	if (selection != null) {
+		if (typeof selection !== 'object' || Array.isArray(selection)) error(400, 'Invalid place.');
+		const { id, name } = selection as Record<string, unknown>;
+		if (
+			typeof id !== 'string' ||
+			!id ||
+			id.length > 200 ||
+			typeof name !== 'string' ||
+			!name.trim() ||
+			name.length > 100
+		)
+			error(400, 'Invalid place.');
+		selectedPlace = { id, name };
+	}
+	const dateSelection = (payload as { selectedDate?: unknown }).selectedDate;
+	let selectedDate: string | null = null;
+	if (dateSelection != null) {
+		if (
+			typeof dateSelection !== 'string' ||
+			!/^\d{4}-\d{2}-\d{2}$/.test(dateSelection) ||
+			Number.isNaN(new Date(`${dateSelection}T00:00:00Z`).getTime()) ||
+			new Date(`${dateSelection}T00:00:00Z`).toISOString().slice(0, 10) !== dateSelection
+		)
+			error(400, 'Invalid date.');
+		selectedDate = dateSelection;
+	}
+	const slotSelection = (payload as { selectedSlot?: unknown }).selectedSlot;
+	let selectedSlot: { venue: string; date: string; partySize: number; time: string } | null = null;
+	if (slotSelection != null) {
+		if (typeof slotSelection !== 'object' || Array.isArray(slotSelection))
+			error(400, 'Invalid time.');
+		const { venue, date, partySize, time } = slotSelection as Record<string, unknown>;
+		if (
+			typeof venue !== 'string' ||
+			!venue.trim() ||
+			venue.length > 100 ||
+			date !== selectedDate ||
+			!Number.isInteger(partySize) ||
+			(partySize as number) < 1 ||
+			(partySize as number) > 12 ||
+			typeof time !== 'string' ||
+			!/^\d{1,2}:\d{2} [AP]M$/.test(time)
+		)
+			error(400, 'Invalid time.');
+		selectedSlot = { venue, date: selectedDate!, partySize: partySize as number, time };
+	}
 
 	const openrouter = createOpenAI({
 		apiKey: env.OPENROUTER_API_KEY,
@@ -72,6 +120,24 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			parts: message.parts.filter((part) => part.type === 'text')
 		}))
 		.filter((message) => message.parts.length);
+	if (selectedPlace) {
+		history.at(-1)?.parts.push({
+			type: 'text',
+			text: `Selected place in the interface: ${JSON.stringify(selectedPlace)}. This is the user's current choice, not evidence of reservation availability.`
+		});
+	}
+	if (selectedDate) {
+		history.at(-1)?.parts.push({
+			type: 'text',
+			text: `Selected date in the interface: ${selectedDate}. This is the user's current choice, not a new availability check.`
+		});
+	}
+	if (selectedSlot) {
+		history.at(-1)?.parts.push({
+			type: 'text',
+			text: `Selected time in the interface: ${JSON.stringify(selectedSlot)}. This is the user's choice from an earlier result, not a live hold or booking.`
+		});
+	}
 	const modelMessages = await convertToModelMessages(history);
 	const discovered = new Set<string>();
 	return Sentry.startSpanManual({ name: 'chat.intake', op: 'ai.stream' }, async (span, finish) => {

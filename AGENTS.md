@@ -1,6 +1,6 @@
-# Agent judgment
+# Agent Principle
 
-Build from the user's stated intent. Treat the current system, its users, and its constraints as things to learn, not assumptions to defend.
+Build from the user's stated intent. Treat the current system, its users, and its constraints as things to learn, not assumptions to defend. Delegate tasks to designated and user-defined subagents.
 
 ## Working loop
 

@@ -1,7 +1,5 @@
-import { browserbase, Stagehand, type ClientLLM } from '@browserbasehq/stagehand';
-import OpenAI from 'openai';
+import { browserbase, Stagehand } from '@browserbasehq/stagehand';
 import * as Sentry from '@sentry/sveltekit';
-import { z } from 'zod/v4';
 
 type ReservationQuery = {
 	restaurant?: unknown;
@@ -10,61 +8,17 @@ type ReservationQuery = {
 	partySize?: unknown;
 };
 
-const pageSchema = z.object({
-	visibleTimes: z.array(z.string())
-});
-
-function makeModel(apiKey: string): ClientLLM {
-	const openrouter = new OpenAI({ apiKey, baseURL: 'https://openrouter.ai/api/v1' });
-	return {
-		generate: async (request) => {
-			if (request.responseFormat?.type !== 'json_schema') {
-				throw new Error('Stagehand requires a structured response.');
-			}
-			const response = await openrouter.responses.create({
-				model: 'openai/gpt-4.1-mini',
-				instructions: request.systemPrompt,
-				input: request.messages.map((message) => ({
-					role: message.role,
-					content: (Array.isArray(message.content) ? message.content : [message.content]).map(
-						(block) => {
-							if (block.type === 'text') return { type: 'input_text' as const, text: block.text };
-							if (block.type === 'image')
-								return {
-									type: 'input_image' as const,
-									image_url: `data:${block.mimeType};base64,${block.data}`,
-									detail: 'auto' as const
-								};
-							throw new Error('Unsupported Stagehand message content.');
-						}
-					)
-				})) as unknown as Parameters<typeof openrouter.responses.create>[0]['input'],
-				text: {
-					format: {
-						type: 'json_schema',
-						name: request.responseFormat.name,
-						schema: request.responseFormat.schema as Record<string, unknown>,
-						strict: true
-					}
-				}
-			});
-			return {
-				role: 'assistant',
-				content: { type: 'text', text: response.output_text },
-				outputFormat: 'json_schema',
-				structuredContent: JSON.parse(response.output_text)
-			};
-		}
-	};
-}
-
 export async function findReservationPages(
 	input: ReservationQuery,
-	keys: { browserbase?: string; openrouter?: string }
+	keys: { browserbase?: string }
 ) {
-	const restaurant = typeof input.restaurant === 'string' ? input.restaurant.trim() : '';
+	const restaurantInput = typeof input.restaurant === 'string' ? input.restaurant.trim() : '';
 	const area = typeof input.area === 'string' ? input.area.trim() : '';
-	if ((!restaurant && !area) || restaurant.length > 100 || area.length > 100) {
+	const restaurant =
+		area && restaurantInput.toLowerCase().endsWith(`, ${area.toLowerCase()}`)
+			? restaurantInput.slice(0, -area.length - 2).trim()
+			: restaurantInput;
+	if ((!restaurant && !area) || restaurantInput.length > 100 || area.length > 100) {
 		return { error: 'Provide a restaurant or public neighborhood/city (up to 100 characters).' };
 	}
 	if (
@@ -119,15 +73,26 @@ export async function findReservationPages(
 					if (parsed.protocol !== 'https:') return [];
 					parsed.searchParams.delete('date');
 					parsed.searchParams.delete('seats');
+					parsed.searchParams.delete('party_size');
 					return [{ title, url: parsed.toString() }];
 				} catch {
 					return [];
 				}
 			})
 			.slice(0, 5);
-		const result: { pages: typeof pages; inspection?: unknown; availability: string } = {
+		const result: {
+			pages: typeof pages;
+			inspection?: unknown;
+			availability: string;
+			request: { venue: string; date: string | null; partySize: number | null };
+		} = {
 			pages,
-			availability: 'Not checked for the requested date and party size.'
+			availability: 'Not checked for the requested date and party size.',
+			request: {
+				venue: restaurant || area,
+				date: typeof input.date === 'string' ? input.date : null,
+				partySize: typeof input.partySize === 'number' ? input.partySize : null
+			}
 		};
 		Sentry.getActiveSpan()?.setAttribute('reservation.page_count', pages.length);
 
@@ -145,57 +110,35 @@ export async function findReservationPages(
 					.toLowerCase() === venue
 			);
 		});
-		if (!sevenrooms || !keys.openrouter) return result;
-		const openrouterKey = keys.openrouter;
+		if (!sevenrooms || typeof input.date !== 'string' || typeof input.partySize !== 'number')
+			return result;
 		const inspectSpan = Sentry.startInactiveSpan({ name: 'sevenrooms.inspect', op: 'browser' });
+		let inspectionStage = 'launch';
 
 		try {
 			const browser = await browserbase.launch({ apiKey: browserbaseKey });
 			try {
-				const stagehand = await Stagehand.create({ browser, model: makeModel(openrouterKey) });
+				inspectionStage = 'attach';
+				const stagehand = await Stagehand.create({ browser });
 				try {
+					inspectionStage = 'navigate';
 					const [page] = await browser.context.pages();
-					await page.goto(sevenrooms.url);
+					const filteredUrl = new URL(sevenrooms.url);
+					filteredUrl.searchParams.set('date', input.date);
+					filteredUrl.searchParams.set('party_size', String(input.partySize));
+					await page.goto(filteredUrl.toString());
+					const requestedDate = new Date(`${input.date}T00:00:00Z`).toLocaleDateString('en-US', {
+						timeZone: 'UTC',
+						month: 'short',
+						day: 'numeric'
+					});
+					inspectionStage = 'verify_filters';
 					let tree = '';
 					for (let attempt = 0; attempt < 8; attempt++) {
 						tree = (await page.snapshot()).formattedTree;
 						if (
-							tree.includes('Search for reservations') &&
-							(/button: \d{1,2}:\d{2} [AP]M/.test(tree) ||
-								tree.includes('No availability on this date'))
-						)
-							break;
-						await new Promise((resolve) => setTimeout(resolve, 1_000));
-					}
-					if (!tree.includes('Search for reservations')) return result;
-					if (input.partySize !== undefined) {
-						await stagehand.act('Click the Guests selector in the reservation search controls.');
-						await stagehand.act(`Select ${input.partySize} guests from the open menu.`);
-					}
-					if (typeof input.date === 'string') {
-						await stagehand.act('Click the Date selector in the reservation search controls.');
-						const requested = new Date(`${input.date}T00:00:00Z`).toLocaleDateString('en-US', {
-							timeZone: 'UTC',
-							month: 'long',
-							day: 'numeric',
-							year: 'numeric'
-						});
-						await stagehand.act(`Select ${requested} in the open date picker.`);
-					}
-					const requestedDate =
-						typeof input.date === 'string'
-							? new Date(`${input.date}T00:00:00Z`).toLocaleDateString('en-US', {
-									timeZone: 'UTC',
-									month: 'short',
-									day: 'numeric'
-								})
-							: null;
-					for (let attempt = 0; attempt < 8; attempt++) {
-						tree = (await page.snapshot()).formattedTree;
-						if (
-							(!requestedDate || tree.includes(`button: Date ${requestedDate}`)) &&
-							(input.partySize === undefined ||
-								tree.includes(`button: Guests ${input.partySize} Guests`)) &&
+							tree.includes(`button: Date ${requestedDate}`) &&
+							tree.includes(`button: Guests ${input.partySize} Guests`) &&
 							(/button: \d{1,2}:\d{2} [AP]M/.test(tree) ||
 								tree.includes('No availability on this date'))
 						)
@@ -204,35 +147,78 @@ export async function findReservationPages(
 					}
 					const selectedDate = /button: Date ([A-Za-z]{3} \d{1,2})/.exec(tree)?.[1] ?? null;
 					const selectedPartySize = Number(/button: Guests (\d+) Guests/.exec(tree)?.[1]) || null;
+					const selectedUrlDate = new URL(await page.url()).searchParams.get('date');
 					const filtersMatch =
-						(!requestedDate || selectedDate === requestedDate) &&
-						(input.partySize === undefined || selectedPartySize === input.partySize);
-					if (!filtersMatch) return result;
-					if (!/button: \d{1,2}:\d{2} [AP]M/.test(tree)) {
-						result.availability = 'No times were visible for the selected date and party.';
+						selectedDate === requestedDate &&
+						selectedUrlDate === input.date &&
+						selectedPartySize === input.partySize;
+					if (!filtersMatch) {
+						inspectSpan.setAttribute('outcome', 'filter_mismatch');
+						result.availability =
+							'Provider filters could not be verified; these are candidate links only.';
 						return result;
 					}
-					const inspected = await stagehand.extract(
-						'From this reservation page only, extract times explicitly visible as bookable buttons. Do not infer or invent times.',
-						pageSchema
-					);
-					const visibleTimes = [
-						...new Set(
-							inspected.data.visibleTimes.filter((time) => tree.includes(`button: ${time}`))
-						)
-					];
+					sevenrooms.url = filteredUrl.toString();
+					inspectionStage = 'extract_times';
+					const readCards = () =>
+						page.evaluate(() => {
+							const buttons = [...document.querySelectorAll('button')];
+							const visible = (button: Element) =>
+								button.getClientRects().length > 0 &&
+								getComputedStyle(button).visibility === 'visible';
+							const experiences = [...document.querySelectorAll('h3')].flatMap((heading) => {
+								let card = heading as HTMLElement;
+								while (card.parentElement?.querySelectorAll('h3').length === 1) {
+									card = card.parentElement;
+								}
+								if (card.innerText.includes('No availability on this date')) return [];
+								const cardButtons = [...card.querySelectorAll('button')].filter(visible);
+								const times = [
+									...new Set(
+										cardButtons
+											.map((button) => button.textContent?.trim() ?? '')
+											.filter((label) => /^\d{1,2}:\d{2} [AP]M$/.test(label))
+									)
+								];
+								const more = cardButtons.find((button) =>
+									/^\d+ More times$/.test(button.textContent?.trim() ?? '')
+								);
+								return times.length || more
+									? [
+											{
+												name: heading.textContent?.trim() ?? '',
+												times,
+												moreButtonIndex: more ? buttons.indexOf(more) : -1
+											}
+										]
+									: [];
+							});
+							return experiences;
+						});
+					let experiences = await readCards();
+					for (let attempt = 0; attempt < 12; attempt++) {
+						const more = experiences.find((experience) => experience.moreButtonIndex >= 0);
+						if (!more) break;
+						await page.locator('button').nth(more.moreButtonIndex).click();
+						experiences = await readCards();
+					}
+					const visibleTimes = [...new Set(experiences.flatMap((experience) => experience.times))];
 					inspectSpan.setAttribute('reservation.visible_time_count', visibleTimes.length);
 					result.inspection = {
-						url: sevenrooms.url,
+						url: filteredUrl.toString(),
 						venue: restaurant,
 						selectedDate,
 						selectedPartySize,
+						checkedAt: new Date().toISOString(),
+						experiences: experiences.map(({ name, times }) => ({ name, times })),
 						visibleTimes,
-						complete: false
+						complete: !experiences.some((experience) => experience.moreButtonIndex >= 0)
 					};
-					if (requestedDate && input.partySize !== undefined && visibleTimes.length) {
+					if (visibleTimes.length) {
 						result.availability =
-							'Visible times for the requested date and party; more times may be hidden.';
+							'Visible times for the requested date and party; availability may change.';
+					} else {
+						result.availability = 'No times verified for the selected date and party.';
 					}
 				} finally {
 					await stagehand.close();
@@ -240,9 +226,13 @@ export async function findReservationPages(
 			} finally {
 				await browser.close();
 			}
-		} catch {
+		} catch (cause) {
 			inspectSpan.setAttribute('outcome', 'inspection_error');
-			Sentry.captureMessage('SevenRooms page inspection failed', 'warning');
+			Sentry.withScope((scope) => {
+				scope.setTag('reservation.inspection_stage', inspectionStage);
+				scope.setTag('reservation.error_type', cause instanceof Error ? cause.name : 'unknown');
+				Sentry.captureMessage('SevenRooms page inspection failed', 'warning');
+			});
 			result.availability =
 				'Reservation page inspection was unavailable; these are candidate links only.';
 		} finally {
