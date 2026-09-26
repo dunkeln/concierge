@@ -31,6 +31,14 @@ Record a new entry only when a failure or limitation is observed and useful to r
 - Verification: The local home exposed all seven separate cards in the carousel; `bun run check` passed.
 - Remaining limit: The extra scenes are editorial choices, not inferred restaurant matches or live availability.
 
+### 2026-09-26 — Scene carousel motion and framing were too subtle
+
+- Evidence: The local home showed three small cards with captions over the artwork; the requested Apple reference uses larger images with text outside the frame.
+- Cause: The card sizing and gradient overlay dominated the small scroll-linked image shift.
+- Change: Show two larger square image frames, put labels beneath them, and move the image within its clipped frame as the rail scrolls.
+- Verification: The local browser showed the new framing at desktop and phone widths, all seven cards remained reachable by scrolling, and the phone frame measured 161 × 161 px.
+- Remaining limit: CSS scroll-linked motion requires browser support; reduced-motion users receive static images.
+
 ### 2026-09-26 — Home composer did not visibly read as a squircle
 
 - Evidence: The local home screenshot showed ordinary rounded corners after the shared squircle CSS change. In the live browser, the composer computed `corner-shape: superellipse(2)` but only a 19.6px radius.

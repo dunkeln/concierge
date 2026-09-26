@@ -240,29 +240,29 @@
 				</Message.Root>
 			{:else}
 				<div class="my-auto w-full space-y-5">
-					<div class="scene-rail mx-auto flex w-full max-w-2xl snap-x gap-3 overflow-x-auto pb-2">
+					<div class="scene-rail mx-auto flex w-full max-w-2xl snap-x gap-4 overflow-x-auto pb-2">
 						{#each sceneCards as scene (scene.atmosphere)}
 							<button
 								type="button"
-								class="scene-card relative aspect-[4/5] w-44 flex-none snap-start overflow-hidden rounded-2xl border border-primary-foreground/15 bg-secondary text-left transition-transform hover:-translate-y-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-foreground active:translate-y-0 sm:w-[calc((100%-1.5rem)/3)]"
+								class="scene-card w-[46%] flex-none snap-start text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-foreground"
 								onclick={() => {
 									input = `${scene.title}. Help me find a place and check if I can reserve it.`;
 									messageField?.focus();
 								}}
 							>
-								<img
-									src={sceneImages[scene.atmosphere]}
-									alt=""
-									class="scene-image absolute inset-0 size-full object-cover"
-								/>
 								<span
-									class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent px-4 pt-12 pb-4"
+									class="scene-frame relative block aspect-square overflow-hidden rounded-3xl bg-secondary"
 								>
-									<span class="block text-base font-medium text-white"
-										>{sceneTitles[scene.atmosphere]}</span
-									>
-									<span class="mt-1 block text-xs text-white/75">{scene.detail}</span>
+									<img
+										src={sceneImages[scene.atmosphere]}
+										alt=""
+										class="scene-image absolute top-0 -left-[10%] h-full w-[120%] max-w-none object-cover"
+									/>
 								</span>
+								<span class="scene-caption mt-3 block text-base font-medium text-primary-foreground"
+									>{sceneTitles[scene.atmosphere]}</span
+								>
+								<span class="sr-only">{scene.detail}</span>
 							</button>
 						{/each}
 					</div>
@@ -354,15 +354,32 @@
 				animation-timeline: --scene;
 				animation-range: cover 0% cover 100%;
 			}
+			.scene-caption {
+				animation: scene-caption linear both;
+				animation-timeline: --scene;
+				animation-range: cover 0% cover 100%;
+			}
 		}
 	}
 
 	@keyframes scene-parallax {
 		from {
-			transform: translateX(-5%) scale(1.1);
+			transform: translateX(-8%);
 		}
 		to {
-			transform: translateX(5%) scale(1.1);
+			transform: translateX(8%);
+		}
+	}
+
+	@keyframes scene-caption {
+		0%,
+		100% {
+			opacity: 0.35;
+			transform: translateY(6px);
+		}
+		50% {
+			opacity: 1;
+			transform: translateY(0);
 		}
 	}
 </style>
