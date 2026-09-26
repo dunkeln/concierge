@@ -6,10 +6,24 @@
 	import * as Message from '$lib/components/ui/message';
 	import MapWidget from '$lib/MapWidget.svelte';
 	import ReservationCalendar from '$lib/ReservationCalendar.svelte';
+	import { scenarios } from '$lib/onboarding';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
 	let input = $state('');
+	const sceneTitles: Record<(typeof scenarios)[number]['atmosphere'], string> = {
+		Quiet: 'Catch up',
+		Lively: 'Celebrate',
+		Intimate: 'Date night',
+		Casual: 'Take it easy',
+		Adventurous: 'Try somewhere new'
+	};
+	let sceneCards = $derived(
+		scenarios
+			.map((scenario, index) => ({ ...scenario, index }))
+			.filter(({ atmosphere }) => data.atmospheres.includes(atmosphere))
+	);
+	let messageField: HTMLTextAreaElement;
 	let selectedPlace = $state<{ id: string; name: string } | null>(null);
 	let selectedDate = $state<string | null>(null);
 	let selectedSlot = $state<{
@@ -213,9 +227,45 @@
 					</Message.Content>
 				</Message.Root>
 			{:else}
-				<p class="mt-auto text-center text-sm text-primary-foreground/55">
-					Tell me when, where, and how many people.
-				</p>
+				<div class="my-auto w-full space-y-5">
+					<div class="text-center">
+						<p class="text-xs tracking-[0.2em] text-primary-foreground/45 uppercase">
+							Your kind of night
+						</p>
+						<h1 class="mt-2 text-xl font-medium text-primary-foreground">Where shall we go?</h1>
+					</div>
+					<div
+						class={`mx-auto grid gap-3 ${sceneCards.length === 1 ? 'max-w-60 grid-cols-1' : 'max-w-lg grid-cols-2'}`}
+					>
+						{#each sceneCards as scene (scene.atmosphere)}
+							<button
+								type="button"
+								class="group relative aspect-[4/5] overflow-hidden rounded-2xl border border-primary-foreground/15 bg-secondary text-left transition-transform hover:-translate-y-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-foreground active:translate-y-0"
+								onclick={() => {
+									input = `${scene.title}. Help me find a restaurant.`;
+									messageField?.focus();
+								}}
+							>
+								<span
+									class="absolute inset-0 bg-[length:500%_auto] bg-center"
+									style={`background-image: url('/editorial/night-out-scenes.png'); background-position: ${scene.index * 25}% center;`}
+									aria-hidden="true"
+								></span>
+								<span
+									class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent px-4 pt-12 pb-4"
+								>
+									<span class="block text-base font-medium text-white"
+										>{sceneTitles[scene.atmosphere]}</span
+									>
+									<span class="mt-1 block text-xs text-white/75">{scene.detail}</span>
+								</span>
+							</button>
+						{/each}
+					</div>
+					<p class="text-center text-xs text-primary-foreground/50">
+						Pick a scene or tell me your own plan.
+					</p>
+				</div>
 			{/each}
 			{#if chat.status === 'submitted'}
 				<p class="text-sm text-primary-foreground/55" role="status">Thinking…</p>
@@ -266,6 +316,7 @@
 			<label for="message" class="sr-only">Your reservation request</label>
 			<textarea
 				id="message"
+				bind:this={messageField}
 				bind:value={input}
 				rows="2"
 				placeholder="Table for two in the West Village on Friday, 7–9pm…"
