@@ -15,6 +15,15 @@ Record a new entry only when a failure or limitation is observed and useful to r
 
 ## Entries
 
+### 2026-09-26 — Home composer did not visibly read as a squircle
+
+- Evidence: The local home screenshot showed ordinary rounded corners after the shared squircle CSS change. In the live browser, the composer computed `corner-shape: superellipse(2)` but only a 19.6px radius.
+- Cause: The curve was active, but the radius was too small relative to the composer's height to make the shape visible.
+- Change: Increased the composer from `rounded-xl` to `rounded-4xl` and the send control from `rounded-lg` to `rounded-xl`.
+- Verification: The local browser computed a 36.4px composer radius with `superellipse(2)` and the updated shape was visible in a screenshot.
+- Regression guard: Inspect the local home composer at desktop width and confirm the computed corner shape and visible outline.
+- Remaining limit: Browsers without `corner-shape` support use the larger ordinary rounded-corner fallback.
+
 ### 2026-09-26 — Concierge missed visible Ai Fiori dinner slots
 
 - Evidence: Two local chat searches for two guests on 2026-09-28, 7–9 pm reported no verified times, while SevenRooms showed dinner slots. A traced chat call passed `restaurant: "Ai Fiori, New York City"` and `area: "New York City"`; the adapter returned only candidate links. The old extraction also included buttons under “Next available date” and missed collapsed “More times.”

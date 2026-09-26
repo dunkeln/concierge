@@ -261,7 +261,7 @@
 		{/if}
 		<form
 			onsubmit={send}
-			class="flex shrink-0 items-end gap-3 rounded-xl border border-primary-foreground/20 bg-secondary p-3"
+			class="flex shrink-0 items-end gap-3 rounded-4xl border border-primary-foreground/20 bg-secondary p-3"
 		>
 			<label for="message" class="sr-only">Your reservation request</label>
 			<textarea
@@ -274,7 +274,7 @@
 			<button
 				type="submit"
 				aria-label="Send message"
-				class="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary-foreground text-primary disabled:opacity-50"
+				class="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary-foreground text-primary disabled:opacity-50"
 				disabled={!data.chatConfigured || !input.trim() || chat.status !== 'ready'}
 			>
 				<SFIcon icon="arrow-up" size="lg" />
