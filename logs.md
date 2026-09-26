@@ -15,6 +15,14 @@ Record a new entry only when a failure or limitation is observed and useful to r
 
 ## Entries
 
+### 2026-09-26 — Empty chat scenes were one cropped image and one visible card
+
+- Evidence: The first local implementation used a five-panel image with CSS offsets; the signed-in user saw only one card because onboarding had one selected scenario.
+- Cause: Image packing and a strict selected-scenarios filter made the scene UI less flexible than the intended small visual set.
+- Change: Use individual image files per scene and fill the rail to three cards, with onboarding choices first.
+- Verification: The local home rendered three separate cards with distinct images; `bun run check` passed.
+- Remaining limit: The extra scenes are editorial choices, not inferred restaurant matches or live availability.
+
 ### 2026-09-26 — Home composer did not visibly read as a squircle
 
 - Evidence: The local home screenshot showed ordinary rounded corners after the shared squircle CSS change. In the live browser, the composer computed `corner-shape: superellipse(2)` but only a 19.6px radius.

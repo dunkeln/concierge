@@ -18,10 +18,18 @@
 		Casual: 'Take it easy',
 		Adventurous: 'Try somewhere new'
 	};
+	const sceneImages: Record<(typeof scenarios)[number]['atmosphere'], string> = {
+		Quiet: '/editorial/dinner-table-v2.png',
+		Lively: '/editorial/lively-night.png',
+		Intimate: '/editorial/intimate-night.png',
+		Casual: '/editorial/casual-night.png',
+		Adventurous: '/editorial/restaurant-arrival-v2.png'
+	};
 	let sceneCards = $derived(
-		scenarios
-			.map((scenario, index) => ({ ...scenario, index }))
-			.filter(({ atmosphere }) => data.atmospheres.includes(atmosphere))
+		[
+			...scenarios.filter(({ atmosphere }) => data.atmospheres.includes(atmosphere)),
+			...scenarios.toReversed().filter(({ atmosphere }) => !data.atmospheres.includes(atmosphere))
+		].slice(0, 3)
 	);
 	let messageField: HTMLTextAreaElement;
 	let selectedPlace = $state<{ id: string; name: string } | null>(null);
@@ -234,23 +242,21 @@
 						</p>
 						<h1 class="mt-2 text-xl font-medium text-primary-foreground">Where shall we go?</h1>
 					</div>
-					<div
-						class={`mx-auto grid gap-3 ${sceneCards.length === 1 ? 'max-w-60 grid-cols-1' : 'max-w-lg grid-cols-2'}`}
-					>
+					<div class="mx-auto flex w-full max-w-2xl snap-x gap-3 overflow-x-auto pb-2">
 						{#each sceneCards as scene (scene.atmosphere)}
 							<button
 								type="button"
-								class="group relative aspect-[4/5] overflow-hidden rounded-2xl border border-primary-foreground/15 bg-secondary text-left transition-transform hover:-translate-y-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-foreground active:translate-y-0"
+								class="relative aspect-[4/5] w-44 flex-none snap-start overflow-hidden rounded-2xl border border-primary-foreground/15 bg-secondary text-left transition-transform hover:-translate-y-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-foreground active:translate-y-0 sm:w-[calc((100%-1.5rem)/3)]"
 								onclick={() => {
 									input = `${scene.title}. Help me find a restaurant.`;
 									messageField?.focus();
 								}}
 							>
-								<span
-									class="absolute inset-0 bg-[length:500%_auto] bg-center"
-									style={`background-image: url('/editorial/night-out-scenes.png'); background-position: ${scene.index * 25}% center;`}
-									aria-hidden="true"
-								></span>
+								<img
+									src={sceneImages[scene.atmosphere]}
+									alt=""
+									class="absolute inset-0 size-full object-cover"
+								/>
 								<span
 									class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent px-4 pt-12 pb-4"
 								>
