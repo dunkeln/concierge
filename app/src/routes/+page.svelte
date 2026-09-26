@@ -274,10 +274,10 @@
 			<button
 				type="submit"
 				aria-label="Send message"
-				class="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary-foreground text-primary disabled:opacity-50"
+				class="flex size-11 shrink-0 items-center justify-center rounded-xl text-primary-foreground transition-colors hover:bg-primary-foreground/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-foreground active:bg-primary-foreground/15 disabled:text-primary-foreground/35 disabled:hover:bg-transparent"
 				disabled={!data.chatConfigured || !input.trim() || chat.status !== 'ready'}
 			>
-				<SFIcon icon="arrow-up" size="lg" />
+				<SFIcon icon="arrow-up" size="md" weight="semibold" />
 			</button>
 		</form>
 	</div>
