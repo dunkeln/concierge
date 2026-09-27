@@ -15,6 +15,14 @@ Record a new entry only when a failure or limitation is observed and useful to r
 
 ## Entries
 
+### 2026-09-27 — Old follow-up controls and unverified reservation calendars stayed in chat
+
+- Evidence: The local transcript screenshot showed an answered date question with its reply form still visible, plus a new reservation calendar saying both “No verified times” and “Not checked for the requested date and party size.”
+- Cause: The page rendered follow-up controls for every past tool result and built a reservation calendar from request parameters even when the provider returned no inspection.
+- Change: Keep the old question in the transcript but render reply controls only for the current follow-up. Render a reservation calendar only when an inspection includes a check time and a times array, including verified empty results.
+- Verification: `bun run check` and the existing calendar/text chat browser test passed. The specific live model conversation was not replayed.
+- Remaining limit: A verified historical calendar remains visible but is disabled after a later turn; the agent's prose may still describe unsupported venues inaccurately.
+
 ### 2026-09-27 — Home page spent 270 ms loading the session
 
 - Evidence: Sentry trace `3c67dfdeaff444afa2ec6d598e111ae5` showed a 428 ms local `GET /`; Better Auth's `get-session` took 270 ms, including separate Neon reads for session and user.

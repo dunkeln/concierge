@@ -370,6 +370,8 @@
 			const request = output?.request;
 			const inspection = output?.inspection;
 			if (
+				typeof inspection?.checkedAt !== 'string' ||
+				!Array.isArray(inspection.visibleTimes) ||
 				typeof request?.date !== 'string' ||
 				!/^\d{4}-\d{2}-\d{2}$/.test(request.date) ||
 				typeof request.venue !== 'string' ||
@@ -485,6 +487,8 @@
 								<Bubble.Root variant="secondary" class="max-w-md">
 									<Bubble.Content>{followup.question}</Bubble.Content>
 								</Bubble.Root>
+							{/if}
+							{#if followup && chat.messages.at(-1)?.id === message.id}
 								<FollowupWidget
 									id={message.id}
 									options={followup.options}
