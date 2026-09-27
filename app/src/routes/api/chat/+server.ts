@@ -154,7 +154,14 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 	const history = validated.data
 		.map((message) => ({
 			...message,
-			parts: message.parts.filter((part) => part.type === 'text')
+			parts: message.parts.flatMap((part) => {
+				if (part.type === 'text') return [part];
+				if (part.type !== 'tool-execute' || part.state !== 'output-available') return [];
+				const output = part.output as { kind?: unknown; question?: unknown } | null;
+				return output?.kind === 'followup' && typeof output.question === 'string'
+					? [{ type: 'text' as const, text: output.question }]
+					: [];
+			})
 		}))
 		.filter((message) => message.parts.length);
 	if (selectedPlace) {
@@ -177,6 +184,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 	}
 	const modelMessages = await convertToModelMessages(history);
 	const discovered = new Set<string>();
+	let awaitingFollowup = false;
 	let emitBrowserSession:
 		((event: { state: 'open' | 'closed'; id: string; venue: string }) => Promise<void>) | undefined;
 	return Sentry.startSpanManual({ name: 'chat.intake', op: 'ai.stream' }, async (span, finish) => {
@@ -219,6 +227,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 						additionalProperties: false
 					}),
 					execute: async ({ name, input }) => {
+						if (awaitingFollowup) return { error: 'Waiting for the user.' };
 						if (!discovered.has(name) || !Object.hasOwn(capabilities, name)) {
 							return { error: 'Search for this capability before executing it.' };
 						}
@@ -243,16 +252,34 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 								.sign(new TextEncoder().encode(env.BETTER_AUTH_SECRET));
 							return { ...observation, viewPath: `/api/reservations/view?ticket=${ticket}` };
 						}
-						return Sentry.startSpan({ name: `capability.${name}`, op: 'agent.tool' }, () =>
-							capabilities[name].run(
-								input,
-								name === 'reservations.find' ? emitBrowserSession : undefined
-							)
+						const outcome = await Sentry.startSpan(
+							{ name: `capability.${name}`, op: 'agent.tool' },
+							() =>
+								capabilities[name].run(
+									input,
+									name === 'reservations.find' ? emitBrowserSession : undefined
+								)
 						);
+						if (name === 'followup' && (outcome as { kind?: string })?.kind === 'followup')
+							awaitingFollowup = true;
+						return outcome;
 					}
 				})
 			},
-			stopWhen: stepCountIs(7),
+			stopWhen: [
+				stepCountIs(7),
+				({ steps }) =>
+					steps
+						.at(-1)
+						?.toolResults.some(
+							(result) =>
+								result.toolName === 'execute' &&
+								typeof result.output === 'object' &&
+								result.output !== null &&
+								'kind' in result.output &&
+								result.output.kind === 'followup'
+						) ?? false
+			],
 			onLanguageModelCallStart: ({ callId }) => {
 				modelSpans.set(
 					callId,

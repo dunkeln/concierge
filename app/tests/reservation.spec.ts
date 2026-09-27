@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 import { createUIMessageStream, createUIMessageStreamResponse } from 'ai';
 import { reservationCase as sample } from './reservation-case';
 
-test('shows verified times and sends the selected slot as intent', async ({ page }) => {
+test('answers calendar and text questions without duplicate sends', async ({ page }) => {
 	let calls = 0;
 	await page.route('**/api/chat', async (route) => {
 		calls++;
@@ -15,6 +15,10 @@ test('shows verified times and sends the selected slot as intent', async ({ page
 				partySize: sample.partySize,
 				time: sample.times[0]
 			});
+			expect(body.messages.at(-1).parts[0].text).toContain(sample.times[0]);
+		}
+		if (calls === 4) {
+			expect(body.messages.at(-1).parts[0].text).toBe('West Village');
 		}
 		const response = createUIMessageStreamResponse({
 			stream: createUIMessageStream({
@@ -41,14 +45,31 @@ test('shows verified times and sends the selected slot as intent', async ({ page
 							}
 						});
 					}
-					writer.write({ type: 'text-start', id: `answer-${calls}` });
-					writer.write({
-						type: 'text-delta',
-						id: `answer-${calls}`,
-						delta:
-							calls === 1 ? 'These times were visible; no booking was made.' : 'Selection received.'
-					});
-					writer.write({ type: 'text-end', id: `answer-${calls}` });
+					if (calls === 1 || calls === 3) {
+						writer.write({
+							type: 'tool-input-available',
+							toolCallId: `followup-${calls}`,
+							toolName: 'execute',
+							input: { name: 'followup', input: {} }
+						});
+						writer.write({
+							type: 'tool-output-available',
+							toolCallId: `followup-${calls}`,
+							output: {
+								kind: 'followup',
+								question: calls === 1 ? 'Which time works for you?' : 'What neighborhood?',
+								options: calls === 3 ? ['West Village', 'Chelsea'] : []
+							}
+						});
+					} else {
+						writer.write({ type: 'text-start', id: `answer-${calls}` });
+						writer.write({
+							type: 'text-delta',
+							id: `answer-${calls}`,
+							delta: 'Selection received.'
+						});
+						writer.write({ type: 'text-end', id: `answer-${calls}` });
+					}
 					writer.write({ type: 'finish' });
 				}
 			})
@@ -67,13 +88,25 @@ test('shows verified times and sends the selected slot as intent', async ({ page
 	const calendar = page.getByRole('region', { name: 'Reservation calendar' });
 	await expect(calendar.getByRole('button', { name: sample.times[0] })).toBeVisible();
 	await expect(calendar.getByRole('button', { name: sample.times[1] })).toBeVisible();
+	await expect(page.getByRole('textbox', { name: 'Reply to the agent' })).toBeVisible();
+	await expect(
+		page.locator('[data-slot="message"]', { has: page.getByText('Which time works for you?') })
+	).toHaveAttribute('data-align', 'end');
+	await calendar.getByLabel('Date').fill('2026-09-29');
+	expect(calls).toBe(1);
+	await calendar.getByLabel('Date').fill(sample.date);
 	await calendar.getByRole('button', { name: sample.times[0] }).click();
+	await expect(page.getByText('Selection received.')).toBeVisible();
 	await expect(calendar.getByRole('button', { name: sample.times[0] })).toHaveAttribute(
 		'aria-pressed',
 		'true'
 	);
-	await page.getByLabel('Your reservation request').fill('I picked that time. What happens next?');
-	await page.getByRole('button', { name: 'Send message' }).click();
-	await expect(page.getByText('Selection received.')).toBeVisible();
 	expect(calls).toBe(2);
+	await page.getByRole('button', { name: 'New chat' }).click();
+	await page.getByLabel('Your reservation request').fill('Find brunch.');
+	await page.getByRole('button', { name: 'Send message' }).click();
+	await page.getByRole('textbox', { name: 'Reply to the agent' }).fill('West Village');
+	await page.getByRole('button', { name: 'Send', exact: true }).click();
+	await expect(page.getByText('Selection received.')).toBeVisible();
+	expect(calls).toBe(4);
 });

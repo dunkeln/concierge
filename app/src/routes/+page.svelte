@@ -7,6 +7,7 @@
 	import * as Message from '$lib/components/ui/message';
 	import MapWidget from '$lib/MapWidget.svelte';
 	import ReservationCalendar from '$lib/ReservationCalendar.svelte';
+	import FollowupWidget from '$lib/FollowupWidget.svelte';
 	import BrowserPreviewStack from '$lib/BrowserPreviewStack.svelte';
 	import PassportLedger from '$lib/PassportLedger.svelte';
 	import { renderMarkdown } from '$lib/markdown';
@@ -121,6 +122,7 @@
 	}
 	let selectedPlace = $state<{ id: string; name: string; area: string } | null>(null);
 	let selectedDate = $state<string | null>(null);
+	let pendingReplyMessageId = $state<string | null>(null);
 	let selectedSlot = $state<{
 		venue: string;
 		date: string;
@@ -181,6 +183,19 @@
 		void chat.sendMessage({ text });
 	}
 
+	async function replyTo(messageId: string, text: string) {
+		const reply = text.trim();
+		if (!reply || !data.chatConfigured || chat.status !== 'ready' || pendingReplyMessageId) return;
+		pendingReplyMessageId = messageId;
+		try {
+			await chat.sendMessage({ text: reply });
+		} catch {
+			// The chat surface offers Retry for failed sends.
+		} finally {
+			pendingReplyMessageId = null;
+		}
+	}
+
 	function newChat() {
 		chat.messages = [];
 		chat.clearError();
@@ -189,6 +204,22 @@
 		selectedDate = null;
 		selectedSlot = null;
 		browserSessions = [];
+		pendingReplyMessageId = null;
+	}
+
+	function followupFor(message: (typeof chat.messages)[number]) {
+		for (const part of message.parts) {
+			if (part.type !== 'tool-execute' || part.state !== 'output-available') continue;
+			const output = part.output as Record<string, unknown> | null;
+			if (
+				output?.kind === 'followup' &&
+				typeof output.question === 'string' &&
+				Array.isArray(output.options) &&
+				output.options.every((option) => typeof option === 'string')
+			)
+				return { question: output.question, options: output.options as string[] };
+		}
+		return null;
 	}
 
 	type Place = { id: string; name: string; lat: number; lon: number };
@@ -281,18 +312,6 @@
 		});
 	}
 
-	function hasPlaceResult(message: (typeof chat.messages)[number]) {
-		return message.parts.some(
-			(part) =>
-				part.type === 'tool-execute' &&
-				part.state === 'output-available' &&
-				typeof part.output === 'object' &&
-				part.output !== null &&
-				'attribution' in part.output &&
-				'places' in part.output
-		);
-	}
-
 	function checkoutObservation(message: (typeof chat.messages)[number]) {
 		for (const part of message.parts) {
 			if (part.type !== 'tool-execute' || part.state !== 'output-available') continue;
@@ -337,84 +356,108 @@
 					{@const searches = placeSearches(message)}
 					{@const inspections = reservationInspections(message)}
 					{@const checkout = checkoutObservation(message)}
-					<Message.Root align={message.role === 'user' ? 'end' : 'start'}>
+					{@const followup = message.role === 'assistant' ? followupFor(message) : null}
+					<Message.Root
+						align={message.role === 'user' || followup || inspections.length > 0 ? 'end' : 'start'}
+					>
 						<Message.Content>
-							<Bubble.Root variant={message.role === 'user' ? 'secondary' : 'ghost'}>
-								<Bubble.Content
-									onpointerover={message.role === 'assistant' ? showLinkPreview : undefined}
-									onpointerout={message.role === 'assistant' ? leaveLinkPreview : undefined}
-									onfocusin={message.role === 'assistant' ? showLinkPreview : undefined}
-									onfocusout={message.role === 'assistant' ? leaveLinkPreview : undefined}
-									class={message.role === 'assistant'
-										? 'prose prose-sm max-w-none prose-invert prose-headings:font-medium prose-headings:text-inherit prose-p:my-2 prose-p:leading-relaxed prose-a:inline-flex prose-a:max-w-full prose-a:items-center prose-a:rounded-full prose-a:border prose-a:border-primary-foreground/15 prose-a:bg-secondary prose-a:px-2.5 prose-a:py-0.5 prose-a:text-xs prose-a:font-medium prose-a:text-inherit prose-a:no-underline prose-a:hover:bg-primary-foreground/15 prose-a:focus-visible:ring-2 prose-a:focus-visible:ring-ring prose-strong:text-inherit prose-code:text-inherit prose-pre:overflow-x-auto prose-pre:rounded-xl prose-pre:bg-secondary'
-										: 'whitespace-pre-wrap'}
-								>
-									{#each message.parts as part, index (index)}
-										{#if part.type === 'text'}
-											{#if message.role === 'assistant'}{@html renderMarkdown(
-													part.text
-												)}{:else}{part.text}{/if}
-										{/if}
-									{/each}
-								</Bubble.Content>
-							</Bubble.Root>
+							{#if message.parts.some((part) => part.type === 'text' && part.text.trim())}
+								<Bubble.Root variant={message.role === 'user' ? 'secondary' : 'ghost'}>
+									<Bubble.Content
+										onpointerover={message.role === 'assistant' ? showLinkPreview : undefined}
+										onpointerout={message.role === 'assistant' ? leaveLinkPreview : undefined}
+										onfocusin={message.role === 'assistant' ? showLinkPreview : undefined}
+										onfocusout={message.role === 'assistant' ? leaveLinkPreview : undefined}
+										class={message.role === 'assistant'
+											? "prose prose-sm max-w-none prose-invert prose-headings:font-medium prose-headings:text-inherit prose-p:my-2 prose-p:leading-relaxed prose-a:font-medium prose-a:text-inherit prose-a:underline prose-a:decoration-primary-foreground/50 prose-a:underline-offset-4 prose-a:after:ml-0.5 prose-a:after:content-['↗'] prose-a:hover:decoration-primary-foreground prose-a:focus-visible:ring-2 prose-a:focus-visible:ring-ring prose-strong:text-inherit prose-code:text-inherit prose-pre:overflow-x-auto prose-pre:rounded-xl prose-pre:bg-secondary"
+											: 'whitespace-pre-wrap'}
+									>
+										{#each message.parts as part, index (index)}
+											{#if part.type === 'text'}
+												{#if message.role === 'assistant'}{@html renderMarkdown(
+														part.text
+													)}{:else}{part.text}{/if}
+											{/if}
+										{/each}
+									</Bubble.Content>
+								</Bubble.Root>
+							{/if}
+							{#if followup}
+								<FollowupWidget
+									id={message.id}
+									question={followup.question}
+									options={followup.options}
+									disabled={!data.chatConfigured ||
+										chat.status !== 'ready' ||
+										pendingReplyMessageId !== null ||
+										chat.messages.at(-1)?.id !== message.id}
+									onReply={(answer) => void replyTo(message.id, answer)}
+								/>
+							{/if}
 							{#each message.role === 'assistant' ? searches : [] as search}
 								{@const places = search.places}
 								<p class="px-3 text-xs text-primary-foreground/70">{search.area}</p>
-								{#if data.geoapifyMapKey}
-									<div class="mx-3 w-full max-w-xl">
-										<MapWidget
-											{places}
-											token={data.geoapifyMapKey}
-											selectedId={selectedPlace?.id ?? null}
-											onSelect={(place) =>
-												(selectedPlace = { id: place.id, name: place.name, area: search.area })}
-										/>
-									</div>
-								{/if}
-								<select
-									aria-label="Select a place from map results"
-									class="mx-3 max-w-full rounded-lg border border-primary-foreground/25 bg-secondary px-3 py-2 text-xs text-primary-foreground"
-									value={selectedPlace?.id ?? ''}
-									onchange={(event) => {
-										const place = places.find(({ id }) => id === event.currentTarget.value);
-										selectedPlace = place
-											? { id: place.id, name: place.name, area: search.area }
-											: null;
-									}}
-								>
-									<option value="">Select a place</option>
-									{#each places as place, index (`${place.id}-${index}`)}
-										<option value={place.id}>{place.name}</option>
-									{/each}
-								</select>
+								<div class="mx-3 w-full max-w-xl">
+									<MapWidget
+										{places}
+										token={data.geoapifyMapKey}
+										selectedId={selectedPlace?.id ?? null}
+										onSelect={(place) =>
+											(selectedPlace = { id: place.id, name: place.name, area: search.area })}
+									/>
+								</div>
 							{/each}
 							{#each message.role === 'assistant' ? inspections : [] as inspection}
-								<ReservationCalendar
-									{inspection}
-									googleEnabled={data.googleEnabled}
-									calendarConnected={data.calendarConnected}
-									selectedTime={selectedSlot?.date === inspection.date &&
-									selectedSlot.venue === inspection.venue
-										? selectedSlot.time
-										: null}
-									selectedExperience={selectedSlot?.experience ?? null}
-									onSelectDate={(date) => {
-										selectedDate = date;
-										selectedSlot = null;
-									}}
-									onSelectTime={(time, experience) => {
-										selectedDate = inspection.date;
-										selectedSlot = {
-											venue: inspection.venue,
-											date: inspection.date,
-											partySize: inspection.partySize,
-											time,
-											...(experience ? { experience } : {}),
-											...(inspection.sourceUrl ? { sourceUrl: inspection.sourceUrl } : {})
-										};
-									}}
-								/>
+								<div class="w-full max-w-md self-end">
+									<ReservationCalendar
+										{inspection}
+										googleEnabled={data.googleEnabled}
+										calendarConnected={data.calendarConnected}
+										disabled={!data.chatConfigured ||
+											chat.status !== 'ready' ||
+											chat.messages.at(-1)?.id !== message.id}
+										selectedTime={selectedSlot?.date === inspection.date &&
+										selectedSlot.venue === inspection.venue
+											? selectedSlot.time
+											: null}
+										selectedExperience={selectedSlot?.experience ?? null}
+										onSelectDate={(date) => {
+											if (
+												chat.status !== 'ready' ||
+												pendingReplyMessageId ||
+												chat.messages.at(-1)?.id !== message.id
+											)
+												return;
+											selectedDate = date;
+											selectedSlot = null;
+											void replyTo(
+												message.id,
+												`Please check ${inspection.venue} for ${inspection.partySize} guests on ${date}.`
+											);
+										}}
+										onSelectTime={(time, experience) => {
+											if (
+												chat.status !== 'ready' ||
+												pendingReplyMessageId ||
+												chat.messages.at(-1)?.id !== message.id
+											)
+												return;
+											selectedDate = inspection.date;
+											selectedSlot = {
+												venue: inspection.venue,
+												date: inspection.date,
+												partySize: inspection.partySize,
+												time,
+												...(experience ? { experience } : {}),
+												...(inspection.sourceUrl ? { sourceUrl: inspection.sourceUrl } : {})
+											};
+											void replyTo(
+												message.id,
+												`I choose ${inspection.venue} on ${inspection.date} at ${time}${experience ? ` for ${experience}` : ''} for ${inspection.partySize} guests.`
+											);
+										}}
+									/>
+								</div>
 							{/each}
 							{#if message.role === 'assistant' && checkout}
 								<div
@@ -436,20 +479,6 @@
 										rel="noopener noreferrer">View checkout in live browser</a
 									>
 								</div>
-							{/if}
-							{#if message.role === 'assistant' && hasPlaceResult(message)}
-								<a
-									href="https://www.openstreetmap.org/copyright"
-									class="px-3 text-xs text-primary-foreground/70 underline-offset-2 hover:underline"
-									target="_blank"
-									rel="noopener noreferrer">Area data © OpenStreetMap contributors</a
-								>
-								<a
-									href="https://www.geoapify.com/"
-									class="px-3 text-xs text-primary-foreground/70 underline-offset-2 hover:underline"
-									target="_blank"
-									rel="noopener noreferrer">Places and map by Geoapify</a
-								>
 							{/if}
 						</Message.Content>
 					</Message.Root>

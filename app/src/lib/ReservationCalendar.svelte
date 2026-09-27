@@ -16,6 +16,7 @@
 		calendarConnected,
 		selectedTime,
 		selectedExperience,
+		disabled = false,
 		onSelectDate,
 		onSelectTime
 	}: {
@@ -24,6 +25,7 @@
 		calendarConnected: boolean;
 		selectedTime: string | null;
 		selectedExperience?: string | null;
+		disabled?: boolean;
 		onSelectDate: (date: string) => void;
 		onSelectTime: (time: string, experience?: string) => void;
 	} = $props();
@@ -78,10 +80,10 @@
 </script>
 
 <section
-	class="mx-3 max-w-full rounded-lg border border-primary-foreground/20 bg-secondary p-3 text-sm"
+	class="w-full max-w-md rounded-xl border border-primary-foreground/20 bg-secondary p-3 text-sm"
 	aria-label="Reservation calendar"
 >
-	<div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+	<div class="mb-2 flex flex-wrap items-center justify-between gap-2">
 		<div>
 			<p class="font-medium">{inspection.venue}</p>
 			<p class="text-xs text-primary-foreground/60">{inspection.partySize} guests · SevenRooms</p>
@@ -93,23 +95,29 @@
 				value={date}
 				onchange={(event) => {
 					chosenDate = event.currentTarget.value;
-					onSelectDate(chosenDate);
 				}}
-				class="rounded-md border border-primary-foreground/20 bg-primary px-2 py-1 text-primary-foreground"
+				{disabled}
+				class="min-h-11 rounded-lg border border-primary-foreground/20 bg-primary px-2 text-primary-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
 			/>
 		</label>
 	</div>
 	{#if date === inspection.date}
 		{#if times.length}
-			<div class="flex flex-wrap gap-2" aria-label="Visible reservation times">
+			<div class="flex flex-wrap gap-1.5" aria-label="Visible reservation times">
 				{#each choices as choice (`${choice.time}-${choice.experience ?? ''}`)}
 					<button
 						type="button"
 						aria-pressed={selectedTime === choice.time &&
 							(selectedExperience ?? null) === (choice.experience ?? null)}
-						class="rounded-md border border-primary-foreground/25 px-3 py-1.5 text-xs hover:bg-primary-foreground/10 aria-pressed:bg-primary-foreground aria-pressed:text-primary"
+						disabled={disabled ||
+							(selectedTime === choice.time &&
+								(selectedExperience ?? null) === (choice.experience ?? null))}
+						class="min-h-11 max-w-full rounded-lg border border-primary-foreground/25 px-3 py-2 text-left text-xs hover:bg-primary-foreground/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50 aria-pressed:border-primary-foreground aria-pressed:bg-primary-foreground/10"
 						onclick={() => onSelectTime(choice.time, choice.experience)}
-						>{choice.label}{calendarStatus === 'ready'
+						>{choice.label}{selectedTime === choice.time &&
+						(selectedExperience ?? null) === (choice.experience ?? null)
+							? ' · Selected'
+							: ''}{calendarStatus === 'ready'
 							? conflictsWithCalendar(inspection.date, choice.time, busy)
 								? ' · Calendar conflict'
 								: calendarComplete
@@ -153,7 +161,13 @@
 		{/if}
 	{:else}
 		<p class="text-xs text-primary-foreground/65">
-			Choose this date, then ask to check availability.
+			No verified times for this date. Ask to check availability.
 		</p>
+		<button
+			type="button"
+			disabled={disabled || !date}
+			class="mt-2 min-h-11 rounded-lg bg-primary-foreground px-3 text-xs font-medium text-primary hover:opacity-85 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50"
+			onclick={() => onSelectDate(date)}>Use date</button
+		>
 	{/if}
 </section>

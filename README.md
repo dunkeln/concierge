@@ -34,6 +34,8 @@ In another terminal, run `bun run test:auth`, sign in with your own local accoun
 
 Run `bun run eval:local` for two Braintrust cases using synthetic provider evidence and the configured OpenRouter model. It scores visible-time grounding and invented booking claims; `--no-send-logs` keeps the evaluation results local. This does not test a live reservation page or completed booking.
 
+`app/tests/snapshots.md` records real multi-turn requests and their behavioral checks for future journey evals. These snapshots are not run by the current single-response Braintrust command.
+
 ## Scope and cuts
 
 For a matching SevenRooms venue, Concierge shows checked times by experience and can carry a selected time to provider checkout. A local chat-to-checkout run reached an authenticated live browser view and stopped before guest details or payment. [The separate manual screenshot](proof/README.md) shows that provider screen. This does not prove a completed booking or that every provider time is captured.

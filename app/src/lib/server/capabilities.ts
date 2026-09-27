@@ -146,6 +146,28 @@ async function geoapifySearch(area: unknown, kind: unknown = 'restaurant') {
 }
 
 export const capabilities: Record<string, Capability> = {
+	followup: {
+		description:
+			'Ask the user for missing information and end this turn. Render a reply field, with optional short choices. Do not use for facts you can find with another capability.',
+		input: {
+			question: 'One concise question for the user',
+			options: 'Optional array of up to four short answer choices; free text is always available'
+		},
+		run: ({ question, options }) => {
+			if (typeof question !== 'string' || !question.trim() || question.length > 300)
+				return { error: 'Provide one question of at most 300 characters.' };
+			if (
+				options !== undefined &&
+				(!Array.isArray(options) ||
+					options.length > 4 ||
+					!options.every(
+						(option) => typeof option === 'string' && option.trim() && option.length <= 80
+					))
+			)
+				return { error: 'Provide up to four short answer choices.' };
+			return { kind: 'followup', question: question.trim(), options: options ?? [] };
+		}
+	},
 	'reservations.prepare': {
 		description:
 			'Recheck the user-selected SevenRooms time and advance to provider checkout. Stops before guest details, payment, or final booking submission. Only available after the user chooses Continue to checkout.',
