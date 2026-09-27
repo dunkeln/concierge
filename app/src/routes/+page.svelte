@@ -195,7 +195,28 @@
 		transport: new DefaultChatTransport({
 			prepareSendMessagesRequest: ({ messages }) => ({
 				body: {
-					messages,
+					messages: messages.map((message, index) => ({
+						...message,
+						parts:
+							message.role === 'assistant'
+								? message.parts.flatMap<(typeof message.parts)[number]>((part) => {
+										if (part.type === 'text') return [part];
+										if (part.type !== 'tool-execute' || part.state !== 'output-available') return [];
+										const output = part.output as Record<string, unknown> | null;
+										if (output?.kind === 'followup') return [part];
+										if (index < messages.length - 6) return [];
+										return [
+											{
+												...part,
+												output: {
+													...output,
+													...(Array.isArray(output?.places) ? { places: output.places.slice(0, 8) } : {})
+												}
+											}
+										];
+									})
+								: message.parts
+					})),
 					selectedPlace: $state.snapshot(selectedPlace),
 					preferredCuisine: sessionCuisine,
 					selectedDate,

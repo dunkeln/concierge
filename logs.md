@@ -34,6 +34,14 @@ Record a new entry only when a failure or limitation is observed and useful to r
 - Regression guard: [Ai Fiori snapshot](app/tests/snapshots.md) records the requested-window check. The live test currently verifies the dinner handoff, not exclusion of breakfast choices.
 - Remaining limit: A Browserbase redirect establishes the live handoff, but the test does not independently compare every displayed time with the provider page or prove a completed booking.
 
+### 2026-09-27 — Replayed place results blocked checkout follow-up
+
+- Evidence: A live Ai Fiori search found verified dinner times, but clicking Continue to checkout returned HTTP 413 and “This chat is too long.” The checkout tool was never called.
+- Cause: The client resent full tool results, including repeated place lists, and the chat route rejected the body above 32 KB.
+- Change: Keep the visible transcript intact while sending a bounded context copy: recent tool outputs retain up to eight places, older tool outputs are omitted, and follow-up questions remain.
+- Verification: The three mocked chat UI tests passed; the same opt-in live search then reached the Browserbase checkout view without submitting a booking.
+- Remaining limit: A genuinely long text conversation can still hit the request-size limit; this change bounds repeated tool data, not user-authored text.
+
 ### 2026-09-27 — Prior search results vanished on the next chat turn
 
 - Evidence: After finding Amoura in South San Francisco, later questions lost the restaurant's listing context; the chat route replayed assistant prose but discarded place and reservation search outputs.
