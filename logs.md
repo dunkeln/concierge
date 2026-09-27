@@ -15,6 +15,15 @@ Record a new entry only when a failure or limitation is observed and useful to r
 
 ## Entries
 
+### 2026-09-27 — Home page spent 270 ms loading the session
+
+- Evidence: Sentry trace `3c67dfdeaff444afa2ec6d598e111ae5` showed a 428 ms local `GET /`; Better Auth's `get-session` took 270 ms, including separate Neon reads for session and user.
+- Cause: The auth hook reads the database on every request because session cookie caching was disabled.
+- Change: Enable Better Auth's signed session cookie cache for 60 seconds.
+- Verification: `bun run check` passed. Two authenticated local `GET /` requests returned 200; the first set `better-auth.session_data` and took 468 ms to response headers, while the next used that cookie and took 162 ms. This is a local single-run comparison, not a production latency claim.
+- Regression guard: Compare repeated authenticated `GET /` traces for `get-session` database spans and browser TTFB.
+- Remaining limit: Session revocation on another device may take up to 60 seconds to take effect; this change does not remove the profile and page-load database reads.
+
 ### 2026-09-27 — Ai Fiori inspection intermittently returned candidate links
 
 - Evidence: The same dated, two-person Ai Fiori live browser test reached verified times and checkout on one run, then returned a reservation link with “page inspection was unavailable” on the next. The failing run exposed no verified time buttons.
