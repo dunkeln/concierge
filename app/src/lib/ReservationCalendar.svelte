@@ -57,10 +57,10 @@
 				return matching.length > 1
 					? matching.map((item) => ({
 							time,
-							experience: item.name,
+							experience: item.name || undefined,
 							label: `${label} · ${item.name}`
 						}))
-					: [{ time, experience: matching[0]?.name, label }];
+					: [{ time, experience: matching[0]?.name || undefined, label }];
 			})
 	);
 </script>

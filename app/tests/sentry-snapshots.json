@@ -107,5 +107,71 @@
 			"spanIds": ["89875dd108084169", "b3f32dd7e7dd5b0e", "9f343ff6dc32bec3", "9c4f082de9de6e73"],
 			"evidence": "Sentry captures the area-only reservation arguments and final answer. All 63 POST /api/chat spans show one reservations.find, Browserbase search, and no browser inspection or named-venue follow-up. Request messages are truncated; calls are reconstructed from model output and spans. User reports seeing reservations after opening the link; no provider-page capture establishes those slots. The score judges the missing named-venue check, not provider availability or booking success."
 		}
+	},
+	{
+		"input": {
+			"request": "Check Izakaya Ginji in downtown San Mateo on September 28, 2026 for 4 guests, 6–7 pm. Use its OpenTable page https://www.opentable.com/r/izakaya-ginji-san-mateo and show only browser-verified times.",
+			"observation": {
+				"text": "For 4 at Izakaya Ginji on **Monday, September 28, 2026**, OpenTable showed these browser-verified times in your 6–7 pm window:\n\n- **6:30 pm**\n- **6:45 pm**\n- **7:00 pm**\n\nAlso shown nearby: 7:15 and 7:30 pm. Times can change; no reservation has been made. [OpenTable page](https://www.opentable.com/r/izakaya-ginji-san-mateo)",
+				"calls": [
+					{
+						"tool": "search",
+						"query": "reservations.find inspect availability venue OpenTable sourceUrl date party size time window calendarView"
+					},
+					{
+						"tool": "execute",
+						"name": "reservations.find",
+						"input": {
+							"restaurant": "Izakaya Ginji",
+							"area": "downtown San Mateo, San Mateo",
+							"sourceUrl": "https://www.opentable.com/r/izakaya-ginji-san-mateo",
+							"date": "2026-09-28",
+							"partySize": 4,
+							"startTime": "18:00",
+							"endTime": "19:00",
+							"calendarView": "time"
+						}
+					},
+					{
+						"tool": "execute",
+						"name": "reservations.find",
+						"input": {
+							"restaurant": "Izakaya Ginji",
+							"area": "San Mateo, California",
+							"sourceUrl": "https://www.opentable.com/r/izakaya-ginji-san-mateo",
+							"date": "2026-09-28",
+							"partySize": 4,
+							"startTime": "18:00",
+							"endTime": "19:00",
+							"calendarView": "time"
+						}
+					}
+				],
+				"providerOutcome": null
+			}
+		},
+		"expected": {
+			"candidateVenue": "Izakaya Ginji",
+			"date": "2026-09-28",
+			"partySize": 4
+		},
+		"metadata": {
+			"source": "https://concierge-vn.sentry.io/explore/traces/trace/1d49c41541e74f41aa9abe583fc0638d",
+			"capturedAt": "2026-09-27T23:38:07.917Z",
+			"captureKind": "local_browser_verification",
+			"conversationIds": [
+				"gen-1790552230-fgNstGugngH319HZiAtN",
+				"gen-1790552248-3y8Y0OCLNn3Lff1RNo2h",
+				"gen-1790552286-V99RHW504Gn9Eo9uma11"
+			],
+			"spanIds": [
+				"8a8236d46cb416bc",
+				"8a1bebe3d283ec00",
+				"99ac50a45ba19884",
+				"b3d7a435c973ea8c",
+				"8e6bcbe7857de553"
+			],
+			"evidence": "Actual authenticated local chat captured by Sentry during development verification, not a synthetic eval replay. The first Browserbase inspection failed at the date control; the agent retried once with the same prior OpenTable link and successfully read date/party-verified times. The final answer and both execute arguments come from the Sentry AI conversations. No prepare call or booking occurred. This directed URL check does not establish discovery reliability or multi-turn continuity. Braintrust only judges this frozen observation."
+		}
 	}
 ]

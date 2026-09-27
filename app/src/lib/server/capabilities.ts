@@ -246,10 +246,14 @@ export const capabilities: Record<string, Capability> = {
 	},
 	'reservations.find': {
 		description:
-			'Find nearby restaurants or cafés in a public area and their reservation pages in one call. A supported reservation page may show expanded times for a specified date and party size. Include startTime and endTime when the user requests a time window; matching provider times include 30 minutes on either side. Place listings and other booking links are not verified availability. Call separately for each stop in a multi-stop plan. No booking is made.',
+			'Find restaurants or cafés and inspect their reservation pages in a browser, across booking providers. Reuse the venue, area, and sourceUrl from this conversation; a prior booking link takes precedence over new search. With date and partySize, the browser sets and verifies filters and reads visible times. Include startTime/endTime for a window plus 30 minutes nearby. Report observed blocks or incomplete inspection; links alone do not prove availability. Call separately for each reservation stop. No booking is made.',
 		input: {
 			restaurant: 'Restaurant or café name from places.search, if known',
 			area: 'Public neighborhood and city, such as West Village, New York City',
+			sourceUrl:
+				'Optional public HTTPS reservation link from this conversation; inspect this destination first',
+			bookingProvider:
+				'Optional booking provider requested by the user; otherwise search across providers',
 			kind: 'restaurant or cafe; defaults to restaurant',
 			cuisine:
 				'Optional cuisine explicitly requested by the user; used only when supported by a place category',

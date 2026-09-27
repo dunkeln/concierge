@@ -1,7 +1,8 @@
 # Reservation flow
 
 - Find and show all verified times for the requested date, party size, and window. Distinguish live availability from candidate places and incomplete searches.
-- When a time window is given, keep exact matches distinct from verified times up to 30 minutes nearby. Retry a failed supported-page inspection once; a booking link alone never establishes availability.
+- When a time window is given, keep exact matches distinct from verified times up to 30 minutes nearby. Retry a retryable browser inspection failure once; a booking link alone never establishes availability.
+- Browser inspection follows the conversation's venue, area, and prior reservation link across public booking destinations. Constrain a provider only when the user requests it. Retain both place listings and booking-page references across turns; an area lookup failure must not prevent inspecting an independently found booking page. Verify the displayed venue, selected date, and guests before exposing times, and recheck the selected time before checkout.
 - Keep place identity across turns. Expire time-sensitive observations by their check time: reservation times after 60 seconds and current weather after 10 minutes; recheck before checkout or a new claim of current availability. Expired facts stay in the visible transcript as history, not as selectable times or live evidence.
 - If a chat request is too large, retry once with recent text and the user's selected place, date, and time. Keep the visible transcript; if the retry fails, show the failure without claiming the request was handled.
 - Search by venue, neighborhood, or named public origin. Show origin and destination pins; use travel time for “nearby.” Explore neighborhoods as areas with sourced context, not unsupported scores.

@@ -68,6 +68,18 @@ Observed 2026-09-27: search found a booking page, but the current browser path c
 
 Check that Concierge distinguishes the candidate page from inspected inventory, reports that times are unverified, and offers a verified contact route if available. It must not describe Toast times as checked or claim a booking.
 
+## Prior booking destination across providers
+
+Observed 2026-09-27: SevenRooms-only discovery and inspection skipped an Izakaya Ginji OpenTable link. Combined place-and-page results also lost their booking references on later turns.
+
+1. Find a venue's booking page in a public area.
+2. Choose that venue and supply the missing date/guests.
+3. Check times using the earlier destination; select a time and explicitly continue to checkout.
+
+Check that the agent carries the venue, area, and booking link together, opens that destination regardless of provider, verifies date/guests, and stops before entering guest details or submitting. A requested provider constrains the search; without one, discovery is general. A geocoder failure must not erase the booking link.
+
+The directed local OpenTable chat check is frozen in `sentry-snapshots.json`, including its failed first inspection and successful retry. It establishes named-link inspection and response shaping, not this entire multi-turn journey or discovery reliability. The independent shared checkout check reached guest-details/review without submitting.
+
 ## Partial calendar and failed chat send
 
 Observed 2026-09-26/27: one Google calendar was unavailable during free/busy lookup, and one reservation follow-up showed “That message didn't go through.”

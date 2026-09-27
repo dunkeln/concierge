@@ -146,7 +146,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			!/^\d{1,2}:\d{2} [AP]M$/.test(time) ||
 			(experience !== undefined &&
 				(typeof experience !== 'string' || !experience.trim() || experience.length > 100)) ||
-			(sourceUrl !== undefined && (typeof sourceUrl !== 'string' || sourceUrl.length > 500))
+			(sourceUrl !== undefined && (typeof sourceUrl !== 'string' || sourceUrl.length > 2_000))
 		)
 			error(400, 'Invalid time.');
 		selectedSlot = {
@@ -196,71 +196,69 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 						if (part.type !== 'tool-execute' || part.state !== 'output-available') return [];
 						const output = part.output as Record<string, unknown> | null;
 						if (!output || typeof output !== 'object') return [];
+						const references: Record<string, unknown>[] = [];
 						if (typeof output.area === 'string' && Array.isArray(output.places)) {
-							return [
-								{
-									area: output.area.slice(0, 200),
-									source: 'mapped place listing',
-									places: output.places.slice(0, 25).flatMap((place: unknown) => {
-										if (!place || typeof place !== 'object') return [];
-										const { name, address, categories, lat, lon } = place as Record<
-											string,
-											unknown
-										>;
-										if (
-											typeof name !== 'string' ||
-											typeof lat !== 'number' ||
-											!Number.isFinite(lat) ||
-											typeof lon !== 'number' ||
-											!Number.isFinite(lon)
-										)
-											return [];
-										return [
-											{
-												name: name.slice(0, 100),
-												...(typeof address === 'string' ? { address: address.slice(0, 200) } : {}),
-												categories: Array.isArray(categories)
-													? categories
-															.filter((value): value is string => typeof value === 'string')
-															.slice(0, 8)
-													: [],
-												lat,
-												lon
-											}
-										];
-									})
-								}
-							];
+							references.push({
+								area: output.area.slice(0, 200),
+								source: 'mapped place listing',
+								places: output.places.slice(0, 25).flatMap((place: unknown) => {
+									if (!place || typeof place !== 'object') return [];
+									const { name, address, categories, lat, lon } = place as Record<string, unknown>;
+									if (
+										typeof name !== 'string' ||
+										typeof lat !== 'number' ||
+										!Number.isFinite(lat) ||
+										typeof lon !== 'number' ||
+										!Number.isFinite(lon)
+									)
+										return [];
+									return [
+										{
+											name: name.slice(0, 100),
+											...(typeof address === 'string' ? { address: address.slice(0, 200) } : {}),
+											categories: Array.isArray(categories)
+												? categories
+														.filter((value): value is string => typeof value === 'string')
+														.slice(0, 8)
+												: [],
+											lat,
+											lon
+										}
+									];
+								})
+							});
 						}
 						if (
 							Array.isArray(output.pages) &&
 							output.request &&
 							typeof output.request === 'object'
 						) {
-							return [
-								{
-									provider: 'reservation page search',
-									request: {
-										venue:
-											typeof (output.request as Record<string, unknown>).venue === 'string'
-												? String((output.request as Record<string, unknown>).venue).slice(0, 100)
-												: '',
-										date:
-											typeof (output.request as Record<string, unknown>).date === 'string'
-												? String((output.request as Record<string, unknown>).date).slice(0, 10)
-												: null
-									},
-									pages: output.pages.slice(0, 5).flatMap((page: unknown) => {
-										if (!page || typeof page !== 'object') return [];
-										const { title, url } = page as Record<string, unknown>;
-										return typeof title === 'string' && typeof url === 'string'
-											? [{ title: title.slice(0, 150), url: url.slice(0, 500) }]
-											: [];
-									})
-								}
-							];
+							references.push({
+								provider: 'reservation page search',
+								request: {
+									venue:
+										typeof (output.request as Record<string, unknown>).venue === 'string'
+											? String((output.request as Record<string, unknown>).venue).slice(0, 100)
+											: '',
+									date:
+										typeof (output.request as Record<string, unknown>).date === 'string'
+											? String((output.request as Record<string, unknown>).date).slice(0, 10)
+											: null,
+									partySize:
+										typeof (output.request as Record<string, unknown>).partySize === 'number'
+											? (output.request as Record<string, unknown>).partySize
+											: null
+								},
+								pages: output.pages.slice(0, 5).flatMap((page: unknown) => {
+									if (!page || typeof page !== 'object') return [];
+									const { title, url } = page as Record<string, unknown>;
+									return typeof title === 'string' && typeof url === 'string'
+										? [{ title: title.slice(0, 150), url: url.slice(0, 2_000) }]
+										: [];
+								})
+							});
 						}
-						return [];
+						return references;
 					})
 				: []
 		)

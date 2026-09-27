@@ -1,29 +1,9 @@
 import { error, json } from '@sveltejs/kit';
-import { isIP } from 'node:net';
+import { publicHttps } from '$lib/server/public-url';
 import type { RequestHandler } from './$types';
 
 type Preview = { title: string | null; description: string | null; image: string | null };
 const cache = new Map<string, Preview>();
-
-function publicHttps(raw: string) {
-	try {
-		const url = new URL(raw);
-		const host = url.hostname.replace(/\.$/, '');
-		return url.protocol === 'https:' &&
-			!url.username &&
-			!url.password &&
-			!url.port &&
-			!isIP(host) &&
-			host.includes('.') &&
-			!host.endsWith('.local') &&
-			!host.endsWith('.internal') &&
-			host !== 'localhost'
-			? url
-			: null;
-	} catch {
-		return null;
-	}
-}
 
 export const GET: RequestHandler = async ({ locals, url }) => {
 	if (!locals.user) error(401, 'Sign in to preview links.');

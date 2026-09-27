@@ -12,7 +12,7 @@ The app provides account creation, login, onboarding, and an authenticated chat.
 - Better Auth stores users and sessions in a dedicated Neon Postgres project.
 - Drizzle defines the authentication and onboarding schema in `app/src/lib/server/db/`.
 - Vercel builds `app/` from pushes to the GitHub `mucho` branch. The browser never receives database credentials.
-- Mapbox discovers restaurants. Browserbase Search finds reservation pages, and Stagehand reads visible SevenRooms page controls through a hosted browser. OpenRouter supplies Stagehand's extraction model.
+- Geoapify discovers restaurants and cafés. Browserbase Search finds public reservation pages when no prior booking link is available. One Stagehand browser loop follows booking controls across providers, verifies venue/date/party, and reads visible times through the Browserbase model gateway. OpenRouter powers the Concierge chat.
 - Google Calendar access is optional and separate from sign-in. Better Auth links a Google account with free/busy and calendar-list read-only scopes; the server returns busy intervals to the reservation widget, without event details or calendar data in the model context.
 
 ## Run locally
@@ -40,6 +40,8 @@ For a human-triggered development review, pick a `POST /api/chat` trace in the C
 
 ## Scope and cuts
 
-For a matching SevenRooms venue, Concierge shows checked times by experience and can carry a selected time to provider checkout. A local chat-to-checkout run reached an authenticated live browser view and stopped before guest details or payment. [The separate manual screenshot](proof/README.md) shows that provider screen. This does not prove a completed booking or that every provider time is captured.
+Browser inspection follows the conversation's venue and prior booking link, with a provider constraint only when requested. Local checks inspected Izakaya Ginji on OpenTable and Ai Fiori on SevenRooms; the local chat rendered checked OpenTable times after one retry. The shared handoff reached OpenTable guest-details/review and stopped without entering details, payment, or submitting a booking. [The earlier SevenRooms manual screenshot](proof/README.md) remains separate historical evidence.
+
+Inspection is bounded to two discovered pages and 12 search-control actions per page within a shared 110-second budget. A prior link is inspected first and can follow its booking destination. Dynamic widgets, provider blocks, and ambiguous filters can still fail; those failures do not establish unavailability. These checks do not prove universal provider support, complete inventory, or a completed booking.
 
 AI tools used: Codex for code migration, implementation, review, and runtime checks; Svelte MCP for framework documentation and component diagnostics; iOS design skills for mobile layout and interaction guidance.
