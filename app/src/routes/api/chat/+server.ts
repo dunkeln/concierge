@@ -45,7 +45,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 	if (!env.OPENROUTER_API_KEY) return json({ error: 'Chat is not configured.' }, { status: 503 });
 
 	const raw = await request.text();
-	if (raw.length > 32_000) error(413, 'Conversation is too long.');
+	if (raw.length > 128_000) error(413, 'Conversation is too long.');
 
 	let payload: unknown;
 	try {

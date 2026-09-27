@@ -201,7 +201,8 @@
 							message.role === 'assistant'
 								? message.parts.flatMap<(typeof message.parts)[number]>((part) => {
 										if (part.type === 'text') return [part];
-										if (part.type !== 'tool-execute' || part.state !== 'output-available') return [];
+										if (part.type !== 'tool-execute' || part.state !== 'output-available')
+											return [];
 										const output = part.output as Record<string, unknown> | null;
 										if (output?.kind === 'followup') return [part];
 										if (index < messages.length - 6) return [];
@@ -210,7 +211,9 @@
 												...part,
 												output: {
 													...output,
-													...(Array.isArray(output?.places) ? { places: output.places.slice(0, 8) } : {})
+													...(Array.isArray(output?.places)
+														? { places: output.places.slice(0, 25) }
+														: {})
 												}
 											}
 										];
