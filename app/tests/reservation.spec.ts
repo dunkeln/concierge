@@ -4,42 +4,93 @@ import { createUIMessageStream, createUIMessageStreamResponse } from 'ai';
 import { decodeJwt } from 'jose';
 import { reservationCase as sample } from './reservation-case';
 
-test('chat shows actionable request errors', async ({ page }) => {
+test('chat retries an oversized request with compact context', async ({ page }) => {
+	let calls = 0;
+	const requests: Array<{
+		messages: Array<{ role: string; parts: Array<{ text?: string }> }>;
+	}> = [];
+	await page.route('**/api/chat', async (route) => {
+		calls++;
+		requests.push(route.request().postDataJSON());
+		if (calls === 4) {
+			await route.fulfill({ status: 413, body: 'Rejected' });
+			return;
+		}
+		const response = createUIMessageStreamResponse({
+			stream: createUIMessageStream({
+				execute: ({ writer }) => {
+					writer.write({ type: 'start' });
+					writer.write({ type: 'text-start', id: `answer-${calls}` });
+					writer.write({ type: 'text-delta', id: `answer-${calls}`, delta: `Answer ${calls}.` });
+					writer.write({ type: 'text-end', id: `answer-${calls}` });
+					writer.write({ type: 'finish' });
+				}
+			})
+		});
+		await route.fulfill({
+			status: 200,
+			headers: Object.fromEntries(response.headers),
+			body: await response.text()
+		});
+	});
+	await page.goto('/');
+	for (let turn = 1; turn <= 3; turn++) {
+		await page.getByLabel('Your reservation request').fill(`Earlier request ${turn}.`);
+		await page.getByRole('button', { name: 'Send message' }).click();
+		await expect(page.getByText(`Answer ${turn}.`)).toBeVisible();
+	}
+	const latest = 'Find dinner for two tomorrow.';
+	await page.getByLabel('Your reservation request').fill(latest);
+	await page.getByRole('button', { name: 'Send message' }).click();
+	await expect(page.getByText('Answer 5.')).toBeVisible();
+	await expect.poll(() => calls).toBe(5);
+	const original = requests[3];
+	const compact = requests[4];
+	expect(compact.messages.length).toBeLessThan(original.messages.length);
+	expect(JSON.stringify(compact).length).toBeLessThan(JSON.stringify(original).length);
+	expect(compact.messages.at(-1)?.parts[0].text).toBe(latest);
+	for (let turn = 1; turn <= 3; turn++) {
+		await expect(page.getByText(`Earlier request ${turn}.`)).toBeVisible();
+		await expect(page.getByText(`Answer ${turn}.`)).toBeVisible();
+	}
+	await expect(page.getByText(latest)).toHaveCount(1);
+	await expect(page.getByRole('alert')).toHaveCount(0);
+});
+
+test('chat shows rate limit and streamed model errors', async ({ page }) => {
 	let calls = 0;
 	await page.route('**/api/chat', async (route) => {
 		calls++;
-		if (calls === 3) {
-			const response = createUIMessageStreamResponse({
-				stream: createUIMessageStream({
-					execute: ({ writer }) => {
-						writer.write({ type: 'start' });
-						writer.write({ type: 'error', errorText: 'The model is busy. Please retry shortly.' });
-					}
-				})
-			});
-			await route.fulfill({
-				status: 200,
-				headers: Object.fromEntries(response.headers),
-				body: await response.text()
-			});
+		if (calls === 1) {
+			await route.fulfill({ status: 429, body: 'Rejected' });
 			return;
 		}
-		await route.fulfill({ status: calls === 1 ? 413 : 429, body: 'Rejected' });
+		const response = createUIMessageStreamResponse({
+			stream: createUIMessageStream({
+				execute: ({ writer }) => {
+					writer.write({ type: 'start' });
+					writer.write({ type: 'error', errorText: 'The model is busy. Please retry shortly.' });
+				}
+			})
+		});
+		await route.fulfill({
+			status: 200,
+			headers: Object.fromEntries(response.headers),
+			body: await response.text()
+		});
 	});
 	await page.goto('/');
 	await page.getByLabel('Your reservation request').fill('Find dinner.');
 	await page.getByRole('button', { name: 'Send message' }).click();
-	await expect(page.getByRole('alert')).toContainText('This chat is too long. Start a new chat.');
-	await expect(page.getByRole('button', { name: 'Retry' })).toHaveCount(0);
-	await page.getByRole('button', { name: 'New chat' }).click();
-	await page.getByLabel('Your reservation request').fill('Find dinner.');
-	await page.getByRole('button', { name: 'Send message' }).click();
 	await expect(page.getByRole('alert')).toContainText('Too many requests. Try again shortly.');
 	await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible();
+	expect(calls).toBe(1);
 	await page.getByRole('button', { name: 'New chat' }).click();
 	await page.getByLabel('Your reservation request').fill('Find dinner.');
 	await page.getByRole('button', { name: 'Send message' }).click();
 	await expect(page.getByRole('alert')).toContainText('The model is busy. Please retry shortly.');
+	await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible();
+	expect(calls).toBe(2);
 });
 
 test('answers calendar and text questions without duplicate sends', async ({ page }) => {

@@ -38,9 +38,9 @@ Record a new entry only when a failure or limitation is observed and useful to r
 
 - Evidence: A live Ai Fiori search found verified dinner times, but clicking Continue to checkout returned HTTP 413 and “This chat is too long.” The checkout tool was never called.
 - Cause: The client resent full tool results, including repeated place lists, and the chat route rejected the body above 32 KB.
-- Change: Keep the visible transcript intact while sending a bounded context copy: recent tool outputs retain up to 25 places, older tool outputs are omitted, and follow-up questions remain. Raise the request guard from 32,000 to 128,000 characters so normal tool results can pass through to the server's bounded model-context projection.
-- Verification: The three mocked chat UI tests passed; the same opt-in live search then reached the Browserbase checkout view without submitting a booking. After raising the guard, `bun run check` passed; a live request near the new limit has not been run.
-- Remaining limit: A genuinely long text conversation can still hit the request-size limit; the model still receives a bounded projection of tool results, not the full request body.
+- Change: Keep the visible transcript intact while sending at most 19 recent messages and up to 25 places in recent tool outputs; older tool outputs are omitted and follow-up questions remain. Raise the request guard from 32,000 to 128,000 characters so normal tool results can pass through to the server's bounded model-context projection. On HTTP 413, retry once with the last five messages' text and current selections while leaving the visible transcript intact.
+- Verification: The three mocked chat UI tests passed; the same opt-in live search then reached the Browserbase checkout view without submitting a booking. After raising the guard, `bun run check` passed. A mocked browser run confirmed one smaller retry delivered the assistant response without removing earlier visible turns. A live request near the new limit has not been run.
+- Remaining limit: A genuinely long text conversation can still hit the request-size limit; the model still receives a bounded projection of tool results, not the full request body. The compact retry may lose unselected older references, so the agent must ask or search again if needed.
 
 ### 2026-09-27 — Prior search results vanished on the next chat turn
 

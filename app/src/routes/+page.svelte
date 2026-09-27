@@ -149,7 +149,7 @@
 		if (status === 401)
 			return { message: 'Your session expired. Sign in again.', retry: false, signIn: true };
 		if (status === 413)
-			return { message: 'This chat is too long. Start a new chat.', retry: false };
+			return { message: 'This chat is still too long. Start a new chat.', retry: false };
 		if (status === 400)
 			return { message: 'This chat could not be sent. Start a new chat.', retry: false };
 		if (status === 429) return { message: 'Too many requests. Try again shortly.', retry: true };
@@ -193,9 +193,31 @@
 			].slice(-5);
 		},
 		transport: new DefaultChatTransport({
+			fetch: async (input, init) => {
+				const response = await fetch(input, init);
+				if (response.status !== 413 || typeof init?.body !== 'string') return response;
+				const body = JSON.parse(init.body) as {
+					messages: Array<{ role: string; parts: Array<Record<string, unknown>> }>;
+				};
+				const messages = body.messages.slice(-5).map((message) => ({
+					...message,
+					parts:
+						message.role === 'assistant'
+							? message.parts.flatMap((part) => {
+									if (part.type === 'text') return [part];
+									const output = part.output as { kind?: unknown; question?: unknown } | undefined;
+									return output?.kind === 'followup' && typeof output.question === 'string'
+										? [{ type: 'text', text: output.question }]
+										: [];
+								})
+							: message.parts
+				}));
+				await response.body?.cancel();
+				return fetch(input, { ...init, body: JSON.stringify({ ...body, messages }) });
+			},
 			prepareSendMessagesRequest: ({ messages }) => ({
 				body: {
-					messages: messages.map((message, index) => ({
+					messages: messages.slice(-19).map((message, index) => ({
 						...message,
 						parts:
 							message.role === 'assistant'
@@ -205,7 +227,7 @@
 											return [];
 										const output = part.output as Record<string, unknown> | null;
 										if (output?.kind === 'followup') return [part];
-										if (index < messages.length - 6) return [];
+										if (index < Math.min(messages.length, 19) - 6) return [];
 										return [
 											{
 												...part,
