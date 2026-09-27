@@ -10,11 +10,11 @@ export function rankPlaces<T extends { name: string; categories: string[] }>(
 ): T[] {
 	const venue = normalize(options.venue);
 	const cuisine = normalize(options.cuisine).replace(/[_-]+/g, ' ');
-	const preferences = (Array.isArray(options.preferredCuisines) ? options.preferredCuisines : [])
+	const preferences = (cuisine || venue ? [] : (options.preferredCuisines ?? []))
 		.map((value) => normalize(value).replace(/[_-]+/g, ' '))
 		.filter(Boolean);
 
-	// Geoapify supplies at most 25 candidates; ranking cannot recover omitted places.
+	// ponytail: Only returned candidates can be ranked; widen retrieval if recall becomes the limit.
 	return places
 		.map((place, index) => {
 			const leaves = new Set(

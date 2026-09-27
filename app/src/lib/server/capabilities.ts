@@ -1,7 +1,7 @@
 import { env } from '$env/dynamic/private';
 import * as Sentry from '@sentry/sveltekit';
 import { findReservationPages, prepareReservation } from './reservations';
-import { rankPlaces } from './ranking';
+import { rankPlaces } from './profile/rank';
 
 type SearchContext = { preferredCuisines: string[] };
 
@@ -229,21 +229,21 @@ export const capabilities: Record<string, Capability> = {
 	},
 	'reservations.prepare': {
 		description:
-			'Recheck the user-selected SevenRooms time and advance to provider checkout. Stops before guest details, payment, or final booking submission. Only available after the user chooses Continue to checkout.',
+			'Recheck the user-selected time on its reservation page and advance to checkout. Stops before guest details, payment, or final booking submission. Only available after the user chooses Continue to checkout.',
 		input: {
 			venue: 'Selected venue',
 			date: 'Selected YYYY-MM-DD date',
 			partySize: 'Selected guest count',
 			time: 'Selected time',
-			experience: 'Selected SevenRooms experience, if the time appears under more than one',
-			sourceUrl: 'SevenRooms page from the verified search result'
+			experience: 'Selected seating experience, if the time appears under more than one',
+			sourceUrl: 'Reservation page from the verified search result'
 		},
 		run: (input) =>
 			prepareReservation(input as Parameters<typeof prepareReservation>[0], env.BROWSERBASE_API_KEY)
 	},
 	'reservations.find': {
 		description:
-			'Find nearby restaurants or cafés in a public area and their reservation pages in one call. A matching SevenRooms page may show expanded times for a specified date and party size. Place listings and other booking links are not verified availability. Call separately for each stop in a multi-stop plan. No booking is made.',
+			'Find nearby restaurants or cafés in a public area and their reservation pages in one call. A supported reservation page may show expanded times for a specified date and party size. Place listings and other booking links are not verified availability. Call separately for each stop in a multi-stop plan. No booking is made.',
 		input: {
 			restaurant: 'Restaurant or café name from places.search, if known',
 			area: 'Public neighborhood and city, such as West Village, New York City',
@@ -288,7 +288,7 @@ export const capabilities: Record<string, Capability> = {
 	},
 	'places.search': {
 		description:
-			'Find restaurants or cafés inside a named neighborhood or city using Geoapify. Call once for each distinct area; each result belongs only to its resolved area. Does not show reservation availability.',
+			'Find restaurants or cafés inside a named neighborhood or city. Call once for each distinct area; each result belongs only to its resolved area. Does not show reservation availability.',
 		input: {
 			area: 'Public neighborhood and city, such as West Village, New York City; no private addresses',
 			kind: 'restaurant or cafe; defaults to restaurant',

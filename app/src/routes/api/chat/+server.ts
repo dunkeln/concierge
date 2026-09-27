@@ -3,7 +3,6 @@ import { error, json } from '@sveltejs/kit';
 import { createOpenAI } from '@ai-sdk/openai';
 import { SignJWT } from 'jose';
 import * as Sentry from '@sentry/sveltekit';
-import { eq } from 'drizzle-orm';
 import {
 	convertToModelMessages,
 	createUIMessageStream,
@@ -16,8 +15,7 @@ import {
 } from 'ai';
 import intakeStage from '$lib/server/stages/intake.md?raw';
 import { capabilities } from '$lib/server/capabilities';
-import { db } from '$lib/server/db';
-import { userProfile } from '$lib/server/db/schema';
+import { loadDiningContext } from '$lib/server/profile/context';
 import { cuisines } from '$lib/onboarding';
 import { isFresh, RESERVATION_TTL_MS, WEATHER_TTL_MS } from '$lib/freshness';
 import type { RequestHandler } from './$types';
@@ -170,6 +168,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 					part.text ===
 						'Continue my selected time to checkout. Stop before entering guest or payment details or submitting.'
 			);
+	const diningContext = await loadDiningContext(userId, sessionCuisine);
 
 	const openrouter = createOpenAI({
 		apiKey: env.OPENROUTER_API_KEY,
@@ -201,7 +200,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 							return [
 								{
 									area: output.area.slice(0, 200),
-									provider: 'Geoapify place listing',
+									source: 'mapped place listing',
 									places: output.places.slice(0, 25).flatMap((place: unknown) => {
 										if (!place || typeof place !== 'object') return [];
 										const { name, address, categories, lat, lon } = place as Record<
@@ -372,16 +371,11 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			text: `Selected time in the interface: ${JSON.stringify(selectedSlot)}. This is the user's choice from an earlier result, not a live hold or booking.`
 		});
 	}
+	if (diningContext.modelContext) {
+		history.at(-1)?.parts.push({ type: 'text', text: diningContext.modelContext });
+	}
 	const modelMessages = await convertToModelMessages(history);
 	const discovered = new Set<string>();
-	let cuisinePreferences: Promise<string[]> | undefined;
-	const preferredCuisines = () =>
-		(cuisinePreferences ??= db.query.userProfile
-			.findFirst({
-				where: eq(userProfile.userId, userId),
-				columns: { cuisines: true }
-			})
-			.then((profile) => profile?.cuisines ?? []));
 	let awaitingFollowup = false;
 	let emitBrowserSession:
 		((event: { open: boolean; id: string; venue: string }) => Promise<void>) | undefined;
@@ -458,10 +452,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 									name === 'reservations.find' ? emitBrowserSession : undefined,
 									name === 'places.search' || name === 'reservations.find'
 										? {
-												preferredCuisines: [
-													...(sessionCuisine ? [sessionCuisine] : []),
-													...(await preferredCuisines())
-												]
+												preferredCuisines: diningContext.rankingCuisines
 											}
 										: undefined
 								)
