@@ -34,6 +34,8 @@ In another terminal, run `bun run test:auth`, sign in with your own local accoun
 
 Run `bun run eval:local` in `app/` to replay seven synthetic reservation scenarios against the configured OpenRouter model. The eval checks tool discovery, capability choice, per-stop arguments, grounded times, and checkout wording. It reads the current intake prompt and keeps results local. Run `bun run eval:braintrust` to send the same synthetic run to the dedicated Concierge Braintrust project for comparison. Braintrust code lives in `app/tests/`, outside the app runtime. These cases do not test a live reservation page, browser transport, or completed booking.
 
+For a human-triggered development review, pick a `POST /api/chat` trace in the Concierge Sentry project. Read the `chat.intake`, `gen_ai.generate_content`, and `gen_ai.execute_tool` spans, plus the AI conversation transcript. Check the actual tool order, provider outcome, and final answer against `spec/reservation-flow.md`. If the capture reveals a repeatable failure, record it in `app/tests/snapshots.md`, add a synthetic case to the existing eval, then run `bun run eval:local` or `bun run eval:braintrust`. Sentry is the evidence source; Braintrust receives only the curated eval run. No automatic trace forwarding is configured.
+
 `app/tests/snapshots.md` records observed journeys that motivate the eval cases. Multi-turn browser journeys and provider behavior still need separate checks.
 
 ## Scope and cuts
