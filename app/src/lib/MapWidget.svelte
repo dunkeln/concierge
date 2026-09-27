@@ -3,7 +3,7 @@
 	import 'maplibre-gl/dist/maplibre-gl.css';
 	import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 
-	type Place = { id: string; name: string; lat: number; lon: number };
+	type Place = { id: string; name: string; lat: number; lon: number; categories?: string[] };
 	let {
 		places,
 		token,

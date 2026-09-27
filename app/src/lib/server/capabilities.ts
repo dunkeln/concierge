@@ -1,13 +1,17 @@
 import { env } from '$env/dynamic/private';
 import * as Sentry from '@sentry/sveltekit';
 import { findReservationPages, prepareReservation } from './reservations';
+import { rankPlaces } from './ranking';
+
+type SearchContext = { preferredCuisines: string[] };
 
 type Capability = {
 	description: string;
 	input: Record<string, string>;
 	run: (
 		input: Record<string, unknown>,
-		onBrowserSession?: (event: { open: boolean; id: string; venue: string }) => Promise<void>
+		onBrowserSession?: (event: { open: boolean; id: string; venue: string }) => Promise<void>,
+		context?: SearchContext
 	) => unknown | Promise<unknown>;
 };
 
@@ -101,7 +105,11 @@ async function resolveArea(name: string) {
 	return area;
 }
 
-async function geoapifySearch(area: unknown, kind: unknown = 'restaurant') {
+async function geoapifySearch(
+	area: unknown,
+	kind: unknown = 'restaurant',
+	options: { venue?: unknown; cuisine?: unknown; preferredCuisines?: string[] } = {}
+) {
 	if (typeof area !== 'string' || area.trim().length < 3 || area.length > 100) {
 		return { error: 'Provide a neighborhood or city name (up to 100 characters).' };
 	}
@@ -112,6 +120,13 @@ async function geoapifySearch(area: unknown, kind: unknown = 'restaurant') {
 	if (kind !== 'restaurant' && kind !== 'cafe') {
 		return { error: 'Choose restaurant or cafe.' };
 	}
+	if (
+		(options.venue !== undefined &&
+			(typeof options.venue !== 'string' || options.venue.length > 100)) ||
+		(options.cuisine !== undefined &&
+			(typeof options.cuisine !== 'string' || options.cuisine.length > 40))
+	)
+		return { error: 'Provide a short venue or cuisine name.' };
 	if (!env.GEOAPIFY_API_KEY) return { error: 'Place search is not configured.' };
 
 	try {
@@ -141,13 +156,26 @@ async function geoapifySearch(area: unknown, kind: unknown = 'restaurant') {
 			)
 				return [];
 			return [
-				{ id, name: placeName, address, categories, lon: coordinates[0], lat: coordinates[1] }
+				{
+					id,
+					name: placeName,
+					address,
+					categories: categories ?? [],
+					lon: coordinates[0],
+					lat: coordinates[1]
+				}
 			];
 		});
 		Sentry.getActiveSpan()?.setAttribute('places.result_count', places.length);
+		// Geoapify's proximity order is discovery order, not a measure of request fit or taste.
+		const ranked = rankPlaces(places, {
+			venue: options.venue as string | undefined,
+			cuisine: options.cuisine as string | undefined,
+			preferredCuisines: options.preferredCuisines
+		});
 		return {
 			area: location.formatted ?? name,
-			places,
+			places: ranked,
 			attribution: '© OpenStreetMap contributors via Geoapify',
 			placeListingsIncludeAvailability: false
 		};
@@ -220,11 +248,13 @@ export const capabilities: Record<string, Capability> = {
 			restaurant: 'Restaurant or café name from places.search, if known',
 			area: 'Public neighborhood and city, such as West Village, New York City',
 			kind: 'restaurant or cafe; defaults to restaurant',
+			cuisine:
+				'Optional cuisine explicitly requested by the user; used only when supported by a place category',
 			date: 'Optional requested date as YYYY-MM-DD',
 			partySize: 'Optional number of guests, 1–12',
 			calendarView: 'Optional month, day, or time view for the reservation calendar'
 		},
-		run: async (input, onBrowserSession) => {
+		run: async (input, onBrowserSession, context) => {
 			if (
 				input.calendarView !== undefined &&
 				!['month', 'day', 'time'].includes(String(input.calendarView))
@@ -232,7 +262,13 @@ export const capabilities: Record<string, Capability> = {
 				return { error: 'Choose month, day, or time for the calendar.' };
 			const [reservation, discovery] = await Promise.all([
 				findReservationPages(input, { browserbase: env.BROWSERBASE_API_KEY }, onBrowserSession),
-				input.area ? geoapifySearch(input.area, input.kind) : null
+				input.area
+					? geoapifySearch(input.area, input.kind, {
+							venue: input.restaurant,
+							cuisine: input.cuisine,
+							preferredCuisines: context?.preferredCuisines
+						})
+					: null
 			]);
 			return discovery && 'places' in discovery
 				? {
@@ -255,9 +291,17 @@ export const capabilities: Record<string, Capability> = {
 			'Find restaurants or cafés inside a named neighborhood or city using Geoapify. Call once for each distinct area; each result belongs only to its resolved area. Does not show reservation availability.',
 		input: {
 			area: 'Public neighborhood and city, such as West Village, New York City; no private addresses',
-			kind: 'restaurant or cafe; defaults to restaurant'
+			kind: 'restaurant or cafe; defaults to restaurant',
+			restaurant: 'Optional exact venue name to prioritize',
+			cuisine:
+				'Optional cuisine explicitly requested by the user; used only when supported by a place category'
 		},
-		run: ({ area, kind }) => geoapifySearch(area, kind)
+		run: ({ area, kind, restaurant, cuisine }, _onBrowserSession, context) =>
+			geoapifySearch(area, kind, {
+				venue: restaurant,
+				cuisine,
+				preferredCuisines: context?.preferredCuisines
+			})
 	},
 	'clock.now': {
 		description: 'Get the current date and time in an IANA timezone.',

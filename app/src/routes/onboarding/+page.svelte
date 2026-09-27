@@ -1,6 +1,6 @@
 <script lang="ts">
 	import * as Avatar from '$lib/components/ui/avatar';
-	import { scenarios, travelMinutes } from '$lib/onboarding';
+	import { cuisines, scenarios, travelMinutes } from '$lib/onboarding';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -50,6 +50,25 @@
 								<span class="font-medium">{scenario.title}</span>
 								<span class="mt-1 text-sm text-primary-foreground/60">{scenario.detail}</span>
 							</span>
+						</label>
+					{/each}
+				</div>
+			</fieldset>
+
+			<fieldset>
+				<legend class="mb-3 text-sm font-medium">
+					Favorite cuisines <span class="text-primary-foreground/55"
+						>· optional, choose up to 3</span
+					>
+				</legend>
+				<div class="flex flex-wrap gap-2">
+					{#each cuisines as cuisine (cuisine)}
+						<label>
+							<input class="peer sr-only" type="checkbox" name="cuisine" value={cuisine} />
+							<span
+								class="inline-flex min-h-11 cursor-pointer items-center rounded-lg border border-primary-foreground/30 px-4 text-sm transition-colors peer-checked:bg-primary-foreground peer-checked:text-primary peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-primary-foreground hover:border-primary-foreground/70"
+								>{cuisine}</span
+							>
 						</label>
 					{/each}
 				</div>

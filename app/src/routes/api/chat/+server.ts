@@ -3,6 +3,7 @@ import { error, json } from '@sveltejs/kit';
 import { createOpenAI } from '@ai-sdk/openai';
 import { SignJWT } from 'jose';
 import * as Sentry from '@sentry/sveltekit';
+import { eq } from 'drizzle-orm';
 import {
 	convertToModelMessages,
 	createUIMessageStream,
@@ -15,6 +16,9 @@ import {
 } from 'ai';
 import intakeStage from '$lib/server/stages/intake.md?raw';
 import { capabilities } from '$lib/server/capabilities';
+import { db } from '$lib/server/db';
+import { userProfile } from '$lib/server/db/schema';
+import { cuisines } from '$lib/onboarding';
 import { isFresh, RESERVATION_TTL_MS, WEATHER_TTL_MS } from '$lib/freshness';
 import type { RequestHandler } from './$types';
 
@@ -78,6 +82,14 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		error(400, 'Invalid conversation.');
 	}
 	const selection = (payload as { selectedPlace?: unknown }).selectedPlace;
+	const requestedPreference = (payload as { preferredCuisine?: unknown }).preferredCuisine;
+	if (
+		requestedPreference != null &&
+		(typeof requestedPreference !== 'string' ||
+			!cuisines.includes(requestedPreference as (typeof cuisines)[number]))
+	)
+		error(400, 'Invalid preference.');
+	const sessionCuisine = requestedPreference as string | null | undefined;
 	let selectedPlace: { id: string; name: string; area: string } | null = null;
 	if (selection != null) {
 		if (typeof selection !== 'object' || Array.isArray(selection)) error(400, 'Invalid place.');
@@ -362,6 +374,14 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 	}
 	const modelMessages = await convertToModelMessages(history);
 	const discovered = new Set<string>();
+	let cuisinePreferences: Promise<string[]> | undefined;
+	const preferredCuisines = () =>
+		(cuisinePreferences ??= db.query.userProfile
+			.findFirst({
+				where: eq(userProfile.userId, userId),
+				columns: { cuisines: true }
+			})
+			.then((profile) => profile?.cuisines ?? []));
 	let awaitingFollowup = false;
 	let emitBrowserSession:
 		((event: { open: boolean; id: string; venue: string }) => Promise<void>) | undefined;
@@ -432,10 +452,18 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 						}
 						const outcome = await Sentry.startSpan(
 							{ name: `capability.${name}`, op: 'agent.tool' },
-							() =>
+							async () =>
 								capabilities[name].run(
 									input,
-									name === 'reservations.find' ? emitBrowserSession : undefined
+									name === 'reservations.find' ? emitBrowserSession : undefined,
+									name === 'places.search' || name === 'reservations.find'
+										? {
+												preferredCuisines: [
+													...(sessionCuisine ? [sessionCuisine] : []),
+													...(await preferredCuisines())
+												]
+											}
+										: undefined
 								)
 						);
 						if (name === 'followup' && (outcome as { kind?: string })?.kind === 'followup')

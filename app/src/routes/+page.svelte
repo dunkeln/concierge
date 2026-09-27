@@ -12,7 +12,7 @@
 	import BrowserPreviewStack from '$lib/BrowserPreviewStack.svelte';
 	import PassportLedger from '$lib/PassportLedger.svelte';
 	import { renderMarkdown } from '$lib/markdown';
-	import { scenarios } from '$lib/onboarding';
+	import { cuisines, scenarios } from '$lib/onboarding';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -122,6 +122,8 @@
 		hideLinkPreview();
 	}
 	let selectedPlace = $state<{ id: string; name: string; area: string } | null>(null);
+	let selectedCuisine = $state<string | null>(null);
+	let sessionCuisine = $state<string | null>(null);
 	let selectedDate = $state<string | null>(null);
 	let pendingReplyMessageId = $state<string | null>(null);
 	let selectedSlot = $state<{
@@ -195,6 +197,7 @@
 				body: {
 					messages,
 					selectedPlace: $state.snapshot(selectedPlace),
+					preferredCuisine: sessionCuisine,
 					selectedDate,
 					selectedSlot: $state.snapshot(selectedSlot)
 				}
@@ -228,6 +231,8 @@
 		chat.clearError();
 		input = '';
 		selectedPlace = null;
+		selectedCuisine = null;
+		sessionCuisine = null;
 		selectedDate = null;
 		selectedSlot = null;
 		browserSessions = [];
@@ -451,8 +456,15 @@
 										{places}
 										token={data.geoapifyMapKey}
 										selectedId={selectedPlace?.id ?? null}
-									onSelect={(place) =>
-										(selectedPlace = { id: place.id, name: place.name, area: search.area })}
+										onSelect={(place) => {
+											selectedPlace = { id: place.id, name: place.name, area: search.area };
+											selectedCuisine =
+												cuisines.find((cuisine) =>
+													place.categories?.some((category) =>
+														category.endsWith(`.${cuisine.toLowerCase()}`)
+													)
+												) ?? null;
+										}}
 									/>
 								</div>
 							{/each}
@@ -630,7 +642,26 @@
 			{#if selectedPlace}
 				<div class="mb-2 flex items-center justify-between px-2 text-xs text-primary-foreground/70">
 					<span>Selected: {selectedPlace.name}</span>
-					<button type="button" class="underline" onclick={() => (selectedPlace = null)}>Clear</button>
+					<div class="flex items-center gap-3">
+						{#if selectedCuisine}
+							<button
+								type="button"
+								class="underline"
+								aria-pressed={sessionCuisine === selectedCuisine}
+								onclick={() =>
+									(sessionCuisine = sessionCuisine === selectedCuisine ? null : selectedCuisine)}
+								>More {selectedCuisine}{sessionCuisine === selectedCuisine ? ' ✓' : ''}</button
+							>
+						{/if}
+						<button
+							type="button"
+							class="underline"
+							onclick={() => {
+								selectedPlace = null;
+								selectedCuisine = null;
+							}}>Clear</button
+						>
+					</div>
 				</div>
 			{/if}
 			{#if selectedDate}
