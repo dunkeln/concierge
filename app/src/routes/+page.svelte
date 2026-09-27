@@ -135,7 +135,7 @@
 		id: string;
 		venue: string;
 		viewPath: string;
-		state: 'open' | 'closed';
+		open: boolean;
 	};
 	let browserSessions = $state<BrowserSession[]>([]);
 	const chat = new Chat({
@@ -144,14 +144,14 @@
 			if (!part.data || typeof part.data !== 'object') return;
 			const event = part.data as Partial<BrowserSession>;
 			if (typeof event.id !== 'string' || !event.id || event.id.length > 200) return;
-			if (event.state === 'closed') {
+			if (event.open === false) {
 				browserSessions = browserSessions.map((session) =>
-					session.id === event.id ? { ...session, state: 'closed', viewPath: '' } : session
+					session.id === event.id ? { ...session, open: false, viewPath: '' } : session
 				);
 				return;
 			}
 			if (
-				event.state !== 'open' ||
+				event.open !== true ||
 				typeof event.venue !== 'string' ||
 				event.venue.length > 100 ||
 				typeof event.viewPath !== 'string' ||
@@ -520,8 +520,8 @@
 						{/if}
 					</div>
 				{/each}
-				{#if browserSessions.some((session) => session.state === 'open')}
-					<BrowserPreviewStack sessions={browserSessions.filter((session) => session.state === 'open')} />
+				{#if browserSessions.some((session) => session.open)}
+					<BrowserPreviewStack sessions={browserSessions.filter((session) => session.open)} />
 				{/if}
 				{#if chat.status === 'submitted'}
 					<p class="text-sm text-primary-foreground/55" role="status">Thinking…</p>

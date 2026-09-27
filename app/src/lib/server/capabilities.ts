@@ -7,11 +7,7 @@ type Capability = {
 	input: Record<string, string>;
 	run: (
 		input: Record<string, unknown>,
-		onBrowserSession?: (event: {
-			state: 'open' | 'closed';
-			id: string;
-			venue: string;
-		}) => Promise<void>
+		onBrowserSession?: (event: { open: boolean; id: string; venue: string }) => Promise<void>
 	) => unknown | Promise<unknown>;
 };
 
@@ -136,7 +132,7 @@ async function geoapifySearch(area: unknown, kind: unknown = 'restaurant') {
 			area: location.formatted ?? name,
 			places,
 			attribution: '© OpenStreetMap contributors via Geoapify',
-			availability: 'Not provided by Geoapify'
+			placeListingsIncludeAvailability: false
 		};
 	} catch {
 		Sentry.getActiveSpan()?.setAttribute('outcome', 'place_search_error');
@@ -203,7 +199,7 @@ export const capabilities: Record<string, Capability> = {
 						area: discovery.area,
 						places: discovery.places,
 						attribution: discovery.attribution,
-						placeCoverage: 'Nearby candidates only; reservation inventory is checked separately.'
+						placeListingsIncludeAvailability: false
 					}
 				: {
 						...reservation,

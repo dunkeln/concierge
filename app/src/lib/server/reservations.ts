@@ -49,7 +49,7 @@ const readCards = (page: Page) =>
 export async function findReservationPages(
 	input: ReservationQuery,
 	keys: { browserbase?: string },
-	onSession?: (event: { state: 'open' | 'closed'; id: string; venue: string }) => Promise<void>
+	onSession?: (event: { open: boolean; id: string; venue: string }) => Promise<void>
 ) {
 	const restaurantInput = typeof input.restaurant === 'string' ? input.restaurant.trim() : '';
 	const area = typeof input.area === 'string' ? input.area.trim() : '';
@@ -169,7 +169,7 @@ export async function findReservationPages(
 			sessionId = browser.sessionId;
 			try {
 				if (sessionId)
-					await onSession?.({ state: 'open', id: sessionId, venue: restaurant }).catch(
+					await onSession?.({ open: true, id: sessionId, venue: restaurant }).catch(
 						() => undefined
 					);
 				inspectionStage = 'attach';
@@ -256,9 +256,7 @@ export async function findReservationPages(
 				'Reservation page inspection was unavailable; these are candidate links only.';
 		} finally {
 			if (sessionId)
-				await onSession?.({ state: 'closed', id: sessionId, venue: restaurant }).catch(
-					() => undefined
-				);
+				await onSession?.({ open: false, id: sessionId, venue: restaurant }).catch(() => undefined);
 			inspectSpan.end();
 		}
 		return result;

@@ -186,7 +186,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 	const discovered = new Set<string>();
 	let awaitingFollowup = false;
 	let emitBrowserSession:
-		((event: { state: 'open' | 'closed'; id: string; venue: string }) => Promise<void>) | undefined;
+		((event: { open: boolean; id: string; venue: string }) => Promise<void>) | undefined;
 	return Sentry.startSpanManual({ name: 'chat.intake', op: 'ai.stream' }, async (span, finish) => {
 		const modelSpans = new Map<string, ReturnType<typeof Sentry.startInactiveSpan>>();
 		const endTrace = () => {
@@ -317,9 +317,9 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		return createUIMessageStreamResponse({
 			stream: createUIMessageStream({
 				execute({ writer }) {
-					emitBrowserSession = async ({ state, id, venue }) => {
-						if (state === 'closed') {
-							writer.write({ type: 'data-browser', data: { state, id }, transient: true });
+					emitBrowserSession = async ({ open, id, venue }) => {
+						if (!open) {
+							writer.write({ type: 'data-browser', data: { open, id }, transient: true });
 							return;
 						}
 						const ticket = await new SignJWT({ sid: id, scope: 'preview' })
@@ -329,7 +329,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 							.sign(new TextEncoder().encode(env.BETTER_AUTH_SECRET));
 						writer.write({
 							type: 'data-browser',
-							data: { state, id, venue, viewPath: `/api/reservations/view?ticket=${ticket}` },
+							data: { open, id, venue, viewPath: `/api/reservations/view?ticket=${ticket}` },
 							transient: true
 						});
 					};
