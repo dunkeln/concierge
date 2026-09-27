@@ -118,7 +118,7 @@
 			return;
 		hideLinkPreview();
 	}
-	let selectedPlace = $state<{ id: string; name: string } | null>(null);
+	let selectedPlace = $state<{ id: string; name: string; area: string } | null>(null);
 	let selectedDate = $state<string | null>(null);
 	let selectedSlot = $state<{
 		venue: string;
@@ -171,7 +171,7 @@
 		status: string;
 	};
 
-	function mapboxPlaces(message: (typeof chat.messages)[number]) {
+	function placeSearches(message: (typeof chat.messages)[number]) {
 		return message.parts.flatMap((part) => {
 			if (
 				part.type !== 'tool-execute' ||
@@ -183,19 +183,30 @@
 				!Array.isArray(part.output.places)
 			)
 				return [];
-			return part.output.places.filter(
+			const places = part.output.places.filter(
 				(place): place is Place =>
 					typeof place?.id === 'string' &&
 					typeof place?.name === 'string' &&
 					Number.isFinite(place?.lat) &&
 					Number.isFinite(place?.lon)
 			);
+			return places.length
+				? [
+						{
+							area:
+								'area' in part.output && typeof part.output.area === 'string'
+									? part.output.area
+									: 'Search area',
+							places
+						}
+					]
+				: [];
 		});
 	}
 
-	function reservationInspection(message: (typeof chat.messages)[number]): Inspection | null {
-		for (const part of message.parts) {
-			if (part.type !== 'tool-execute' || part.state !== 'output-available') continue;
+	function reservationInspections(message: (typeof chat.messages)[number]): Inspection[] {
+		return message.parts.flatMap((part) => {
+			if (part.type !== 'tool-execute' || part.state !== 'output-available') return [];
 			const output = part.output as {
 				request?: Record<string, unknown>;
 				inspection?: Record<string, unknown>;
@@ -209,31 +220,32 @@
 				typeof request.venue !== 'string' ||
 				typeof request.partySize !== 'number'
 			)
-				continue;
-			return {
-				venue: request.venue,
-				date: request.date,
-				partySize: request.partySize,
-				...(typeof inspection?.url === 'string' ? { sourceUrl: inspection.url } : {}),
-				...(Array.isArray(inspection?.experiences)
-					? {
-							experiences: inspection.experiences.filter(
-								(item): item is { name: string; times: string[] } =>
-									typeof item?.name === 'string' &&
-									Array.isArray(item.times) &&
-									item.times.every((time: unknown) => typeof time === 'string')
-							)
-						}
-					: {}),
-				times: Array.isArray(inspection?.visibleTimes)
-					? inspection.visibleTimes.filter((time): time is string => typeof time === 'string')
-					: [],
-				complete: inspection?.complete === true,
-				checkedAt: typeof inspection?.checkedAt === 'string' ? inspection.checkedAt : null,
-				status: typeof output?.availability === 'string' ? output.availability : 'Not checked.'
-			};
-		}
-		return null;
+				return [];
+			return [
+				{
+					venue: request.venue,
+					date: request.date,
+					partySize: request.partySize,
+					...(typeof inspection?.url === 'string' ? { sourceUrl: inspection.url } : {}),
+					...(Array.isArray(inspection?.experiences)
+						? {
+								experiences: inspection.experiences.filter(
+									(item): item is { name: string; times: string[] } =>
+										typeof item?.name === 'string' &&
+										Array.isArray(item.times) &&
+										item.times.every((time: unknown) => typeof time === 'string')
+								)
+							}
+						: {}),
+					times: Array.isArray(inspection?.visibleTimes)
+						? inspection.visibleTimes.filter((time): time is string => typeof time === 'string')
+						: [],
+					complete: inspection?.complete === true,
+					checkedAt: typeof inspection?.checkedAt === 'string' ? inspection.checkedAt : null,
+					status: typeof output?.availability === 'string' ? output.availability : 'Not checked.'
+				}
+			];
+		});
 	}
 
 	function hasMapboxResult(message: (typeof chat.messages)[number]) {
@@ -289,8 +301,8 @@
 				<PassportLedger visits={data.visits} atmospheres={data.atmospheres} error={form?.message} />
 			{:else}
 				{#each chat.messages as message (message.id)}
-					{@const places = mapboxPlaces(message)}
-					{@const inspection = reservationInspection(message)}
+					{@const searches = placeSearches(message)}
+					{@const inspections = reservationInspections(message)}
 					{@const checkout = checkoutObservation(message)}
 					<Message.Root align={message.role === 'user' ? 'end' : 'start'}>
 						<Message.Content>
@@ -313,14 +325,17 @@
 									{/each}
 								</Bubble.Content>
 							</Bubble.Root>
-							{#if message.role === 'assistant' && places.length}
+							{#each message.role === 'assistant' ? searches : [] as search}
+								{@const places = search.places}
+								<p class="px-3 text-xs text-primary-foreground/70">{search.area}</p>
 								{#if data.mapboxToken}
 									<div class="mx-3 w-full max-w-xl">
 										<MapWidget
 											{places}
 											token={data.mapboxToken}
 											selectedId={selectedPlace?.id ?? null}
-											onSelect={(place) => (selectedPlace = { id: place.id, name: place.name })}
+											onSelect={(place) =>
+												(selectedPlace = { id: place.id, name: place.name, area: search.area })}
 										/>
 									</div>
 								{/if}
@@ -330,7 +345,9 @@
 									value={selectedPlace?.id ?? ''}
 									onchange={(event) => {
 										const place = places.find(({ id }) => id === event.currentTarget.value);
-										selectedPlace = place ? { id: place.id, name: place.name } : null;
+										selectedPlace = place
+											? { id: place.id, name: place.name, area: search.area }
+											: null;
 									}}
 								>
 									<option value="">Select a place</option>
@@ -338,8 +355,8 @@
 										<option value={place.id}>{place.name}</option>
 									{/each}
 								</select>
-							{/if}
-							{#if message.role === 'assistant' && inspection}
+							{/each}
+							{#each message.role === 'assistant' ? inspections : [] as inspection}
 								<ReservationCalendar
 									{inspection}
 									googleEnabled={data.googleEnabled}
@@ -365,7 +382,7 @@
 										};
 									}}
 								/>
-							{/if}
+							{/each}
 							{#if message.role === 'assistant' && checkout}
 								<div
 									class="mx-3 rounded-lg border border-primary-foreground/20 bg-secondary p-3 text-sm"
@@ -388,6 +405,12 @@
 								</div>
 							{/if}
 							{#if message.role === 'assistant' && hasMapboxResult(message)}
+								<a
+									href="https://www.openstreetmap.org/copyright"
+									class="px-3 text-xs text-primary-foreground/70 underline-offset-2 hover:underline"
+									target="_blank"
+									rel="noopener noreferrer">Area data © OpenStreetMap contributors</a
+								>
 								<a
 									href="https://www.mapbox.com/about/maps/"
 									class="px-3 text-xs text-primary-foreground/70 underline-offset-2 hover:underline"

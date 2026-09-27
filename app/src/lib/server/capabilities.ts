@@ -14,11 +14,58 @@ type MapboxFeature = {
 		mapbox_id?: string;
 		name?: string;
 		full_address?: string;
-		place_formatted?: string;
-		bbox?: number[];
 		poi_category?: string[];
 	};
 };
+
+type OsmArea = {
+	display_name?: string;
+	lat?: string;
+	lon?: string;
+	boundingbox?: string[];
+};
+
+const areaCache = new Map<string, OsmArea>();
+// ponytail: This limiter is per process; use a hosted geocoder or shared limiter before deploying at scale.
+let nextNominatimRequestAt = 0;
+let nominatimQueue: Promise<unknown> = Promise.resolve();
+
+async function resolveArea(name: string) {
+	const key = name.toLocaleLowerCase();
+	const cached = areaCache.get(key);
+	if (cached) return cached;
+	const request = nominatimQueue.then(async () => {
+		const queuedCached = areaCache.get(key);
+		if (queuedCached) return queuedCached;
+		const delay = Math.max(0, nextNominatimRequestAt - Date.now());
+		if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+		nextNominatimRequestAt = Date.now() + 1_100;
+		const url = new URL(env.NOMINATIM_SEARCH_URL || 'https://nominatim.openstreetmap.org/search');
+		url.search = new URLSearchParams({ q: name, format: 'jsonv2', limit: '1' }).toString();
+		const response = await Sentry.startSpan({ name: 'osm.resolve_area', op: 'http.client' }, () =>
+			fetch(url, {
+				headers: {
+					'User-Agent': 'ConciergePearl/0.1 (https://concierge-pearl.vercel.app)',
+					Referer: 'https://concierge-pearl.vercel.app/'
+				},
+				signal: AbortSignal.timeout(8_000)
+			})
+		);
+		if (!response.ok) throw new Error('Area lookup failed.');
+		const results = (await response.json()) as OsmArea[];
+		const area = results[0];
+		if (area) {
+			if (areaCache.size >= 100) areaCache.delete(areaCache.keys().next().value!);
+			areaCache.set(key, area);
+		}
+		return area;
+	});
+	nominatimQueue = request.then(
+		() => undefined,
+		() => undefined
+	);
+	return request;
+}
 
 async function mapboxCall(name: string, args: Record<string, unknown>) {
 	const response = await Sentry.startSpan({ name: `mapbox.${name}`, op: 'http.client' }, () =>
@@ -69,27 +116,24 @@ async function mapboxSearch(area: unknown, kind: unknown = 'restaurant') {
 	if (!env.MAPBOX_ACCESS_TOKEN) return { error: 'Mapbox search is not configured.' };
 
 	try {
-		const areaResult = await mapboxCall('search_and_geocode_tool', {
-			q: name,
-			types: ['neighborhood', 'locality', 'place', 'city']
-		});
-		const location = areaResult.features[0];
-		const center = location?.geometry?.coordinates;
-		if (!center || !Number.isFinite(center[0]) || !Number.isFinite(center[1])) {
+		const location = await resolveArea(name);
+		const latitude = Number(location?.lat);
+		const longitude = Number(location?.lon);
+		if (!location || !Number.isFinite(latitude) || !Number.isFinite(longitude)) {
 			return { error: 'Area not found.' };
 		}
-		const bbox = location.properties?.bbox;
+		const bounds = location.boundingbox?.map(Number);
 		const result = await mapboxCall('category_search_tool', {
 			category: kind === 'cafe' ? 'coffee' : 'restaurant',
 			limit: 25,
-			proximity: { longitude: center[0], latitude: center[1] },
-			...(bbox?.length === 4 && bbox.every(Number.isFinite)
+			proximity: { longitude, latitude },
+			...(bounds?.length === 4 && bounds.every(Number.isFinite)
 				? {
 						bbox: {
-							minLongitude: bbox[0],
-							minLatitude: bbox[1],
-							maxLongitude: bbox[2],
-							maxLatitude: bbox[3]
+							minLongitude: bounds[2],
+							minLatitude: bounds[0],
+							maxLongitude: bounds[3],
+							maxLatitude: bounds[1]
 						}
 					}
 				: {})
@@ -116,17 +160,15 @@ async function mapboxSearch(area: unknown, kind: unknown = 'restaurant') {
 		});
 		Sentry.getActiveSpan()?.setAttribute('places.result_count', places.length);
 		return {
-			area: [location.properties?.name, location.properties?.place_formatted]
-				.filter(Boolean)
-				.join(', '),
+			area: location.display_name ?? name,
 			places,
 			attribution: result.attribution ?? '© Mapbox and its suppliers',
 			availability: 'Not provided by Mapbox'
 		};
 	} catch {
-		Sentry.getActiveSpan()?.setAttribute('outcome', 'mapbox_error');
-		Sentry.captureMessage('Mapbox place search failed', 'warning');
-		return { error: 'Mapbox place search is unavailable right now. Please try again later.' };
+		Sentry.getActiveSpan()?.setAttribute('outcome', 'place_search_error');
+		Sentry.captureMessage('Place search failed', 'warning');
+		return { error: 'Place search is unavailable right now. Please try again later.' };
 	}
 }
 
@@ -162,7 +204,7 @@ export const capabilities: Record<string, Capability> = {
 	},
 	'places.search': {
 		description:
-			'Find restaurants or cafés in a named neighborhood or city using Mapbox. Does not show reservation availability.',
+			'Find restaurants or cafés in a named neighborhood or city. OpenStreetMap resolves the area and Mapbox searches venues inside it. Call once for each distinct area; each result belongs only to its resolved area. Does not show reservation availability.',
 		input: {
 			area: 'Public neighborhood and city, such as West Village, New York City; no private addresses',
 			kind: 'restaurant or cafe; defaults to restaurant'

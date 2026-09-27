@@ -63,20 +63,23 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		error(400, 'Invalid conversation.');
 	}
 	const selection = (payload as { selectedPlace?: unknown }).selectedPlace;
-	let selectedPlace: { id: string; name: string } | null = null;
+	let selectedPlace: { id: string; name: string; area: string } | null = null;
 	if (selection != null) {
 		if (typeof selection !== 'object' || Array.isArray(selection)) error(400, 'Invalid place.');
-		const { id, name } = selection as Record<string, unknown>;
+		const { id, name, area } = selection as Record<string, unknown>;
 		if (
 			typeof id !== 'string' ||
 			!id ||
 			id.length > 200 ||
 			typeof name !== 'string' ||
 			!name.trim() ||
-			name.length > 100
+			name.length > 100 ||
+			typeof area !== 'string' ||
+			!area.trim() ||
+			area.length > 200
 		)
 			error(400, 'Invalid place.');
-		selectedPlace = { id, name };
+		selectedPlace = { id, name, area };
 	}
 	const dateSelection = (payload as { selectedDate?: unknown }).selectedDate;
 	let selectedDate: string | null = null;
@@ -242,7 +245,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 					}
 				})
 			},
-			stopWhen: stepCountIs(5),
+			stopWhen: stepCountIs(7),
 			onLanguageModelCallStart: ({ callId }) => {
 				modelSpans.set(
 					callId,

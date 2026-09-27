@@ -129,6 +129,14 @@ Record a new entry only when a failure or limitation is observed and useful to r
 - Regression guard: Repeat that query and check the returned coordinates fall within the resolved West Village bounds and cuisine claims come from `poi_category`.
 - Remaining limit: Category search returns up to 25 nearby places; it is not an exhaustive restaurant catalog or reservation inventory.
 
+### 2026-09-27 — Mount Washington search anchored to downtown Pittsburgh
+
+- Evidence: `Mount Washington, Pittsburgh` resolved to the Pittsburgh city center in Mapbox, and its restaurant results clustered downtown while the reply named Mount Washington venues. A live Nominatim lookup resolved the neighborhood at 40.4309025, -80.0103312.
+- Cause: The first Mapbox geocode result was accepted without checking that it represented the requested neighborhood. The UI also combined separate place searches into one map.
+- Change: Resolve public areas through OpenStreetMap Nominatim, pass its center and bounds to Mapbox category search, and render each tool result as a labeled map. Keep selected place context tied to its area and show both data attributions.
+- Verification: Live capability calls returned 25 venues in Mount Washington, including Shiloh Gastro, and 25 separate West Village venues, including L'Artusi. `bun run check` passed.
+- Remaining limit: Public Nominatim allows at most one request per second across the whole app. The current queue and cache are process-local, so production traffic needs a hosted geocoder or shared limiter before deployment. Mapbox venues still do not prove reservation availability.
+
 ### 2026-09-26 — SevenRooms inspection can fall back to links
 
 - Evidence: A local reservation probe hit a dynamic iframe/CDP error during Stagehand inspection. On production, two Ai Fiori searches for 2 guests on 2026-09-27 returned a candidate page but no inspected times. A fresh local Browserbase run selected that date and party, though Stagehand logged transient frame errors.
