@@ -5,7 +5,9 @@
 			"observation": {
 				"text": "Checkout is ready for Ai Fiori on September 28, 2026, at 7:15 PM for 2, under DINNER | MONDAY TO SATURDAY. I stopped before guest or payment details; nothing was submitted, and no reservation was made.",
 				"calls": [
-					{ "tool": "search" },
+					{
+						"tool": "search"
+					},
 					{
 						"tool": "execute",
 						"name": "reservations.prepare",
@@ -37,7 +39,15 @@
 			"request": "Then use browser use, right?",
 			"observation": {
 				"text": "I don’t have a browser tool available here. I rechecked with the reservation search, but it couldn’t resolve the area and didn’t inspect any times. Availability for 2 guests at 6:00 PM on September 28, 2026 remains unverified. You can check directly on OpenTable.",
-				"calls": [{ "tool": "search" }, { "tool": "execute", "name": "reservations.find" }],
+				"calls": [
+					{
+						"tool": "search"
+					},
+					{
+						"tool": "execute",
+						"name": "reservations.find"
+					}
+				],
 				"browserSearchUsed": true,
 				"providerOutcome": null
 			}
@@ -46,6 +56,56 @@
 		"metadata": {
 			"source": "https://concierge-vn.sentry.io/explore/traces/trace/d71a4272f4644a08979b98ac14237f97",
 			"capturedAt": "2026-09-27"
+		}
+	},
+	{
+		"input": {
+			"request": "can you find me a place ot reserve for tomorrow 6:00pm in San Mateo downtown? Follow-up answer: 4. Saved cuisine preference: Japanese.",
+			"observation": {
+				"text": "For **4 people tomorrow, Monday, September 28, around 6:00 pm**, **Izakaya Ginji** looks like a downtown Japanese option. I found a reservation page, but couldn’t verify available times for that date and party size. [Check Izakaya Ginji on OpenTable](https://www.opentable.com/r/izakaya-ginji-san-mateo).",
+				"calls": [
+					{
+						"tool": "search"
+					},
+					{
+						"tool": "execute",
+						"name": "clock.now",
+						"input": {
+							"timezone": "America/Los_Angeles"
+						}
+					},
+					{
+						"tool": "execute",
+						"name": "reservations.find",
+						"input": {
+							"area": "Downtown San Mateo, California",
+							"date": "2026-09-28",
+							"partySize": 4,
+							"startTime": "18:00",
+							"endTime": "18:00",
+							"cuisine": "Japanese",
+							"calendarView": "day"
+						}
+					}
+				],
+				"browserSearchUsed": true,
+				"providerOutcome": null
+			}
+		},
+		"expected": {
+			"candidateVenue": "Izakaya Ginji",
+			"date": "2026-09-28",
+			"partySize": 4
+		},
+		"metadata": {
+			"source": "https://concierge-vn.sentry.io/explore/traces/trace/103b1071632c4f4a8099c45ba48913aa",
+			"capturedAt": "2026-09-27T23:16:05.175Z",
+			"conversationIds": [
+				"gen-1790550959-YLZm0SBX0cwU7oL3Hlhf",
+				"gen-1790550964-vI6rhEjOms7Y4FROLgYE"
+			],
+			"spanIds": ["89875dd108084169", "b3f32dd7e7dd5b0e", "9f343ff6dc32bec3", "9c4f082de9de6e73"],
+			"evidence": "Sentry captures the area-only reservation arguments and final answer. All 63 POST /api/chat spans show one reservations.find, Browserbase search, and no browser inspection or named-venue follow-up. Request messages are truncated; calls are reconstructed from model output and spans. User reports seeing reservations after opening the link; no provider-page capture establishes those slots. The score judges the missing named-venue check, not provider availability or booking success."
 		}
 	}
 ]

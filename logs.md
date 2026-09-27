@@ -15,6 +15,14 @@ Record a new entry only when a failure or limitation is observed and useful to r
 
 ## Entries
 
+### 2026-09-27 — Area reservation search stopped before a named-venue check
+
+- Evidence: The [Sentry trace](https://concierge-vn.sentry.io/explore/traces/trace/103b1071632c4f4a8099c45ba48913aa) captured a downtown San Mateo request for tomorrow at 6 pm, followed by four guests. Luna executed `reservations.find` with area, September 28, party size four, and 18:00, but no restaurant. It then recommended Izakaya Ginji with an OpenTable link and unverified times. The 63 chat spans show one reservation search, Browserbase page search, and no browser inspection. Search took 3.80 seconds; the reply turn took 8.71 seconds. The user reports that opening the link showed reservations; those slots were not captured here.
+- Cause: The agent stopped after area discovery despite the prompt asking for a named-venue check before concluding times are unknown. Separately, `findReservationPages` launches inspection only for an exact SevenRooms venue; a Browserbase search key does not expose a general browser capability to the model. OpenTable remains outside the implemented inspection path. No inspection was attempted, so this trace does not show a browser failure or blocked provider.
+- Change: Added this real turn and its source conversation/span IDs to the existing frozen Braintrust snapshots. Added `namedVenueChecked`, applicable only to captures annotated with a candidate and known date/party. No app behavior or provider coverage was changed.
+- Verification: Local and [Braintrust snapshot scoring](https://www.braintrust.dev/app/whentor/p/Concierge/experiments/observed-reservation-snapshots-2e52f857) completed with zero model or provider calls. This case scored 0% on `namedVenueChecked` and passed tool-access truthfulness. Other captures are not applicable to the new score. This measures follow-through on a named candidate, not browser availability or completed booking; adding a case changes the cohort and is not evidence of improvement.
+- Remaining limit: Captured model request messages are truncated. Tool arguments and final prose are recovered from individual model outputs; provider results are not fully captured. A stronger model cannot remove the SevenRooms-only adapter gate.
+
 ### 2026-09-27 — San Mateo venue lookup failed and the agent denied its browser capability
 
 - Evidence: In a local chat, the user selected Izakaya Ginji from downtown San Mateo results, supplied two guests and September 28 at 6:00 PM, then asked to use browser inspection. The agent linked OpenTable but said the area could not resolve and falsely said it had no browser tool. The [Sentry trace](https://concierge-vn.sentry.io/explore/traces/trace/d71a4272f4644a08979b98ac14237f97) shows `reservations.find`, Geoapify geocoding, and Browserbase page searches, but no `sevenrooms.inspect` span.

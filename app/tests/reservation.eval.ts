@@ -10,7 +10,13 @@ type Observation = {
 };
 type Snapshot = {
 	input: { request: string; observation: Observation };
-	expected: { venue?: string; date?: string; partySize?: number; time?: string };
+	expected: {
+		venue?: string;
+		candidateVenue?: string;
+		date?: string;
+		partySize?: number;
+		time?: string;
+	};
 	metadata: { source: string; capturedAt: string };
 };
 
@@ -43,6 +49,21 @@ Eval('Concierge', {
 						call.input?.date === expected.date &&
 						Number(call.input?.partySize) === expected.partySize &&
 						call.input?.time === expected.time
+				)
+			);
+		},
+		function namedVenueChecked({ output, expected }) {
+			if (!expected.candidateVenue || !expected.date || !expected.partySize) return null;
+			return Number(
+				output.calls.some(
+					(call) =>
+						call.tool === 'execute' &&
+						call.name === 'reservations.find' &&
+						String(call.input?.restaurant ?? '')
+							.trim()
+							.toLowerCase() === expected.candidateVenue!.toLowerCase() &&
+						call.input?.date === expected.date &&
+						Number(call.input?.partySize) === expected.partySize
 				)
 			);
 		},
