@@ -1,0 +1,35 @@
+[
+	{
+		"input": {
+			"request": "Continue my selected Ai Fiori 7:15 PM dinner time on 2026-09-28 for two to checkout; stop before guest details or submission.",
+			"observation": {
+				"text": "Checkout is ready for Ai Fiori on September 28, 2026, at 7:15 PM for 2, under DINNER | MONDAY TO SATURDAY. I stopped before guest or payment details; nothing was submitted, and no reservation was made.",
+				"calls": [
+					{ "tool": "search" },
+					{
+						"tool": "execute",
+						"name": "reservations.prepare",
+						"input": {
+							"venue": "Ai Fiori",
+							"date": "2026-09-28",
+							"partySize": 2,
+							"time": "7:15 PM",
+							"experience": "DINNER | MONDAY TO SATURDAY"
+						}
+					}
+				],
+				"providerOutcome": null
+			}
+		},
+		"expected": {
+			"venue": "Ai Fiori",
+			"date": "2026-09-28",
+			"partySize": 2,
+			"time": "7:15 PM"
+		},
+		"metadata": {
+			"source": "https://concierge-vn.sentry.io/explore/traces/trace/3c67dfdeaff444afa2ec6d598e111ae5",
+			"capturedAt": "2026-09-27"
+		}
+	}
+]
