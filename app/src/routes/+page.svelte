@@ -301,7 +301,7 @@
 									onfocusin={message.role === 'assistant' ? showLinkPreview : undefined}
 									onfocusout={message.role === 'assistant' ? leaveLinkPreview : undefined}
 									class={message.role === 'assistant'
-										? 'prose prose-sm max-w-none prose-invert prose-headings:font-medium prose-headings:text-inherit prose-p:my-2 prose-p:leading-relaxed prose-a:text-inherit prose-a:underline-offset-4 prose-strong:text-inherit prose-code:text-inherit prose-pre:overflow-x-auto prose-pre:rounded-xl prose-pre:bg-secondary'
+										? 'prose prose-sm max-w-none prose-invert prose-headings:font-medium prose-headings:text-inherit prose-p:my-2 prose-p:leading-relaxed prose-a:inline-flex prose-a:max-w-full prose-a:items-center prose-a:rounded-full prose-a:border prose-a:border-primary-foreground/15 prose-a:bg-secondary prose-a:px-2.5 prose-a:py-0.5 prose-a:text-xs prose-a:font-medium prose-a:text-inherit prose-a:no-underline prose-a:hover:bg-primary-foreground/15 prose-a:focus-visible:ring-2 prose-a:focus-visible:ring-ring prose-strong:text-inherit prose-code:text-inherit prose-pre:overflow-x-auto prose-pre:rounded-xl prose-pre:bg-secondary'
 										: 'whitespace-pre-wrap'}
 								>
 									{#each message.parts as part, index (index)}
