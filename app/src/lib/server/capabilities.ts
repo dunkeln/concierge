@@ -78,9 +78,12 @@ async function resolveArea(name: string) {
 	if (cached) return cached;
 	const [place, city, ...rest] = name.split(',').map((part) => part.trim());
 	const repeatedCity = city && place.toLowerCase().endsWith(` ${city.toLowerCase()}`);
+	const downtownCalifornia = /^downtown (.+),\s*(?:california|ca)$/i.exec(name);
 	const query = repeatedCity
 		? [place.slice(0, -city.length).trim(), city, ...rest].join(', ')
-		: name;
+		: downtownCalifornia
+			? `${place}, ${downtownCalifornia[1]}, California`
+			: name;
 	const url = new URL('https://api.geoapify.com/v1/geocode/search');
 	url.searchParams.set('text', query);
 	url.searchParams.set('format', 'json');

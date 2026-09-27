@@ -31,5 +31,21 @@
 			"source": "https://concierge-vn.sentry.io/explore/traces/trace/3c67dfdeaff444afa2ec6d598e111ae5",
 			"capturedAt": "2026-09-27"
 		}
+	},
+	{
+		"input": {
+			"request": "Then use browser use, right?",
+			"observation": {
+				"text": "I don’t have a browser tool available here. I rechecked with the reservation search, but it couldn’t resolve the area and didn’t inspect any times. Availability for 2 guests at 6:00 PM on September 28, 2026 remains unverified. You can check directly on OpenTable.",
+				"calls": [{ "tool": "search" }, { "tool": "execute", "name": "reservations.find" }],
+				"browserSearchUsed": true,
+				"providerOutcome": null
+			}
+		},
+		"expected": {},
+		"metadata": {
+			"source": "https://concierge-vn.sentry.io/explore/traces/trace/d71a4272f4644a08979b98ac14237f97",
+			"capturedAt": "2026-09-27"
+		}
 	}
 ]

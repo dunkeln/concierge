@@ -15,6 +15,14 @@ Record a new entry only when a failure or limitation is observed and useful to r
 
 ## Entries
 
+### 2026-09-27 — San Mateo venue lookup failed and the agent denied its browser capability
+
+- Evidence: In a local chat, the user selected Izakaya Ginji from downtown San Mateo results, supplied two guests and September 28 at 6:00 PM, then asked to use browser inspection. The agent linked OpenTable but said the area could not resolve and falsely said it had no browser tool. The [Sentry trace](https://concierge-vn.sentry.io/explore/traces/trace/d71a4272f4644a08979b98ac14237f97) shows `reservations.find`, Geoapify geocoding, and Browserbase page searches, but no `sevenrooms.inspect` span.
+- Cause or hypothesis: Geoapify returned other California downtowns for the plausible area input “downtown San Mateo, California”; adding San Mateo as the city returned the intended neighborhood. Sentry did not capture the model's exact area argument, so that part remains a hypothesis. The reservation adapter only opens an inspection browser for an exact SevenRooms page, so the OpenTable link was a lead rather than inspected inventory. The answer misstated this coverage limit as absence of a browser tool.
+- Change: Normalize that observed downtown wording for geocoding and state the browser coverage limit in the intake prompt. Added the observed turn to the frozen Sentry snapshot eval with a tool-access truthfulness score.
+- Verification: Live Geoapify queries showed the distinct geocoding results; `bun run check` passed. Braintrust scored the frozen turn at 0% for tool-access truthfulness with zero model or provider calls. A new live chat has not yet verified the revised response.
+- Remaining limit: OpenTable availability is still not inspectable by the current adapter, and Sentry does not retain the exact tool arguments or outputs for this turn.
+
 ### 2026-09-27 — Old follow-up controls and unverified reservation calendars stayed in chat
 
 - Evidence: The local transcript screenshot showed an answered date question with its reply form still visible, plus a new reservation calendar saying both “No verified times” and “Not checked for the requested date and party size.”

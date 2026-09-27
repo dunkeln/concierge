@@ -5,6 +5,7 @@ type Call = { tool: 'search' | 'execute'; name?: string; input?: Record<string, 
 type Observation = {
 	text: string;
 	calls: Call[];
+	browserSearchUsed?: boolean;
 	providerOutcome: 'checkout_ready' | 'failed' | null;
 };
 type Snapshot = {
@@ -48,6 +49,14 @@ Eval('Concierge', {
 		function noInventedBooking({ output }) {
 			return Number(
 				!/\b(?:I|we)\s+(?:have\s+)?(?:booked|reserved|confirmed)\b|\b(?:your|the)\s+(?:table|booking|reservation)\s+(?:is|has been)\s+(?:booked|reserved|confirmed)\b/i.test(
+					output.text
+				)
+			);
+		},
+		function toolAccessTruthfulness({ output }) {
+			if (!output.browserSearchUsed) return null;
+			return Number(
+				!/\b(?:no browser tool|don.t have a browser tool|browser tool (?:is )?unavailable)\b/i.test(
 					output.text
 				)
 			);
