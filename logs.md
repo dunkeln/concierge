@@ -15,6 +15,14 @@ Record a new entry only when a failure or limitation is observed and useful to r
 
 ## Entries
 
+### 2026-09-27 — Bigham Tavern search stopped before availability inspection
+
+- Evidence: In the local three-turn chat, the agent listed Mount Washington restaurants, found a Bigham Tavern reservation page, then could not verify a table for two right now. The matching Sentry trace shows two `reservations.find` calls and Browserbase search requests, but no `sevenrooms.inspect` span or error. A fresh SevenRooms search returned no exact Bigham Tavern match.
+- Cause: `reservations.find` launches browser inspection only when a search result is an exact-name SevenRooms page and has an ISO date and party size. Other reservation pages remain uninspected candidate links. The trace does not record safe tool arguments or the branch outcome, so it cannot prove whether the model supplied the ISO date on the last turn.
+- Change: Open; this RCA made no runtime change.
+- Verification: Compared the live chat, the scoped Sentry trace, the adapter branch, and a fresh SevenRooms search. Browserbase search worked; no browser session was launched for this venue.
+- Remaining limit: The prompt can request a search, but it cannot verify availability on a provider the current adapter does not inspect. Prior tool results are also removed from model history on the next turn, causing the agent to search again instead of retaining the candidate link.
+
 ### 2026-09-27 — Geoapify returned two West Village area candidates
 
 - Evidence: A live geocode for `West Village, New York City` returned both a broad Manhattan result labeled as West Village and a West Village boundary; the first match displayed `Manhattan, New York`.
