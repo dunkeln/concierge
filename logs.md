@@ -15,6 +15,29 @@ Record a new entry only when a failure or limitation is observed and useful to r
 
 ## Entries
 
+### 2026-09-27 — Local chat message failed after reservation follow-up
+
+- Evidence: The local chat showed “That message didn't go through” after the user supplied a party size and Tuesday preference. The matching Sentry chat trace contains a SevenRooms inspection warning at `verify_filters`.
+- Hypothesis or cause: The inspection warning degrades reservation results but is caught by the adapter. The actual chat stream or transport error is still unknown because the stream handler logged no error type.
+- Change: Record the stream error type and numeric provider status when available, without logging messages, provider responses, or credentials.
+- Verification: The chat handler type-checks; a separate local browser check confirmed Enter sends and Shift+Enter inserts a line break. The failed request itself has not been reproduced.
+- Remaining limit: The SevenRooms warning cannot yet be attributed as the cause of the failed send. Inspect the next failed chat trace or captured client request before changing the provider path.
+
+### 2026-09-26 — Checkout handoff needs experience and browser capacity
+
+- Evidence: Ai Fiori showed 7:15 pm under Dinner, Bar Fiori, and No Corkage Monday. The first prepare attempt stopped on that ambiguity. A later run advanced the selected Dinner slot to SevenRooms upgrades, where the next action was labeled “Next” and the upgrade total was $0.00. Further verification hit Browserbase HTTP 402: free plan browser minutes exhausted.
+- Cause: Time alone does not identify the provider experience; Browserbase usage limits now block new sessions.
+- Change: Include experience in the selected slot; recheck it before advancing; only advance past a zero-total upgrade screen; stop before guest details, payment, or final submit. Keep a successful live view behind an account-bound, expiring link.
+- Verification: After Browserbase capacity was restored, a local chat run showed Ai Fiori dinner times for two on September 28, selected 7:30 pm Dinner, reached `checkout_ready`, and the signed-in view route returned a 302 to a live Browserbase session. The test session was released. A separate direct adapter run reached 7:15 pm Dinner checkout and confirmed its session was running before release.
+- Remaining limit: No guest details, payment, or booking submission were attempted. The existing checkout screenshot is from a separate manual provider run.
+
+### 2026-09-26 — Checkout session closed before live view
+
+- Evidence: The handoff launched Browserbase with `keepAlive: true`, then called `browser.close()` in `finally`. The installed Stagehand browser handle releases its Browserbase session on `close()` even when created with `keepAlive`.
+- Cause: `keepAlive` preserves the session after a disconnect; it does not override an explicit close.
+- Change: Close failed handoffs immediately. Leave only a verified checkout session alive, with a five-minute provider timeout and a ticket that expires no later than that session.
+- Verification: `bun run check` passed; the local chat-to-checkout run returned an authenticated live-view redirect, then requested session release.
+
 ### 2026-09-26 — Scene cards repeated the same composition
 
 - Evidence: Five separate card images reused people seated at a table beneath similar lamps or windows; the repetition was visible in the local carousel.
@@ -22,6 +45,22 @@ Record a new entry only when a failure or limitation is observed and useful to r
 - Change: Give Catch up, Date night, Take it easy, Weekend brunch, and Coffee catch-up distinct settings and viewpoints while retaining the ink-and-ivory style.
 - Verification: The local home loaded the replacement artwork; all seven image paths are distinct and present, and `bun run check` passed.
 - Remaining limit: These are editorial prompts, not real venue photos.
+
+### 2026-09-26 — One unavailable Google calendar blocked all conflict checks
+
+- Evidence: The authenticated local free/busy endpoint returned 503. Google's calendar list returned five calendars; free/busy succeeded for four and returned `notFound` for one.
+- Cause: The endpoint treated any per-calendar error as a total failure.
+- Change: Return intervals from the four readable calendars with `complete: false`. The UI labels non-conflicting times as an incomplete check rather than conflict-free.
+- Verification: The local endpoint returned four checked calendars and `complete: false`; the reservation calendar displayed the partial status beside live Ai Fiori times.
+- Remaining limit: The unavailable calendar could contain a conflict. No time is declared conflict-free until every listed calendar succeeds.
+
+### 2026-09-26 — Selected reservation time cannot reach checkout through the agent
+
+- Evidence: The local agent found verified Ai Fiori dinner times for two on September 28. After selecting 7:15 pm, a follow-up request to continue to checkout was correctly declined because no execution capability handles that step. Separately, a manual SevenRooms run reached checkout for the same time and party.
+- Cause: `reservations.find` only searches and inspects; the selected slot is conversation context, not an executable provider handoff.
+- Change: Open.
+- Verification: The provider checkout showed the selected venue, date, time, and party, then stopped before guest details, payment, policy acceptance, or submission.
+- Remaining limit: This is manual provider proof. Concierge itself still cannot advance a selected slot to checkout.
 
 ### 2026-09-26 — Empty chat framed every outing as dinner
 
@@ -61,9 +100,9 @@ Record a new entry only when a failure or limitation is observed and useful to r
 - Evidence: Two local chat searches for two guests on 2026-09-28, 7–9 pm reported no verified times, while SevenRooms showed dinner slots. A traced chat call passed `restaurant: "Ai Fiori, New York City"` and `area: "New York City"`; the adapter returned only candidate links. The old extraction also included buttons under “Next available date” and missed collapsed “More times.”
 - Cause: Exact venue matching rejected the redundant city suffix. Model-driven picker clicks were intermittent; page-wide time extraction mixed dates and experiences.
 - Change: Strip the duplicated area suffix, load SevenRooms with its observed `date` and `party_size` URL filters, verify both selected controls, expand current-date cards, and read their visible time buttons by experience.
-- Verification: A direct 2026-09-27 check returned Sunday Supper but no Monday-to-Saturday dinner times. A local chat check for 2026-09-28 returned the verified 7:15–9:00 pm dinner slots and named the experiences. `bun run check` passed.
+- Verification: A direct 2026-09-27 check returned Sunday Supper but no Monday-to-Saturday dinner times. A local chat check for 2026-09-28 returned the verified 7:15–9:00 pm dinner slots and named the experiences. After paid browser access, one general chat prompt rendered a calendar without the expected 7:30 pm Dinner button; a repeated prompt naming `reservations.find` showed it and completed the checkout handoff. `bun run check` passed.
 - Regression guard: Repeat the Ai Fiori 2026-09-28 chat query and check that it lists selected-date dinner times; check 2026-09-27 never attributes next-date dinner buttons to Sunday.
-- Remaining limit: The agent does not continue into checkout or make a booking; provider UI changes can still break card inspection.
+- Remaining limit: The missing-button attempt was not diagnosed; provider UI changes or agent input choices can still break inspection. No booking was made.
 
 ### 2026-09-26 — Ai Fiori checkout requires guest details and payment method
 

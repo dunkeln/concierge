@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { page } from '$app/state';
 	import { Chat } from '@ai-sdk/svelte';
 	import { DefaultChatTransport } from 'ai';
 	import SFIcon from '@alexdev404/sficons-svelte';
@@ -6,10 +7,12 @@
 	import * as Message from '$lib/components/ui/message';
 	import MapWidget from '$lib/MapWidget.svelte';
 	import ReservationCalendar from '$lib/ReservationCalendar.svelte';
+	import PassportLedger from '$lib/PassportLedger.svelte';
 	import { scenarios } from '$lib/onboarding';
 	import type { PageProps } from './$types';
 
-	let { data }: PageProps = $props();
+	let { data, form }: PageProps = $props();
+	let passportOpen = $derived(page.url.searchParams.has('passport'));
 	let input = $state('');
 	const sceneTitles: Record<(typeof scenarios)[number]['atmosphere'], string> = {
 		Quiet: 'Catch up',
@@ -29,13 +32,11 @@
 		Brunch: '/editorial/brunch-table.png',
 		Coffee: '/editorial/coffee-bar.png'
 	};
-	let sceneCards = $derived(
-		[
-			...scenarios.filter(({ atmosphere }) => data.atmospheres.includes(atmosphere)),
-			...scenarios.toReversed().filter(({ atmosphere }) => !data.atmospheres.includes(atmosphere))
-		]
-	);
-	let messageField: HTMLTextAreaElement;
+	let sceneCards = $derived([
+		...scenarios.filter(({ atmosphere }) => data.atmospheres.includes(atmosphere)),
+		...scenarios.toReversed().filter(({ atmosphere }) => !data.atmospheres.includes(atmosphere))
+	]);
+	let messageField = $state<HTMLTextAreaElement>();
 	let selectedPlace = $state<{ id: string; name: string } | null>(null);
 	let selectedDate = $state<string | null>(null);
 	let selectedSlot = $state<{
@@ -43,6 +44,8 @@
 		date: string;
 		partySize: number;
 		time: string;
+		experience?: string;
+		sourceUrl?: string;
 	} | null>(null);
 	const chat = new Chat({
 		transport: new DefaultChatTransport({
@@ -79,6 +82,8 @@
 		venue: string;
 		date: string;
 		partySize: number;
+		sourceUrl?: string;
+		experiences?: { name: string; times: string[] }[];
 		times: string[];
 		complete: boolean;
 		checkedAt: string | null;
@@ -128,6 +133,17 @@
 				venue: request.venue,
 				date: request.date,
 				partySize: request.partySize,
+				...(typeof inspection?.url === 'string' ? { sourceUrl: inspection.url } : {}),
+				...(Array.isArray(inspection?.experiences)
+					? {
+							experiences: inspection.experiences.filter(
+								(item): item is { name: string; times: string[] } =>
+									typeof item?.name === 'string' &&
+									Array.isArray(item.times) &&
+									item.times.every((time: unknown) => typeof time === 'string')
+							)
+						}
+					: {}),
 				times: Array.isArray(inspection?.visibleTimes)
 					? inspection.visibleTimes.filter((time): time is string => typeof time === 'string')
 					: [],
@@ -150,13 +166,32 @@
 				'places' in part.output
 		);
 	}
+
+	function checkoutObservation(message: (typeof chat.messages)[number]) {
+		for (const part of message.parts) {
+			if (part.type !== 'tool-execute' || part.state !== 'output-available') continue;
+			const output = part.output as Record<string, unknown> | null;
+			if (output?.status !== 'checkout_ready') continue;
+			const url = typeof output.viewPath === 'string' ? output.viewPath : '';
+			if (!/^\/api\/reservations\/view\?ticket=[\w.-]+$/.test(url)) continue;
+			return {
+				url,
+				venue: String(output.venue),
+				date: String(output.date),
+				time: String(output.time),
+				experience: typeof output.experience === 'string' ? output.experience : '',
+				partySize: Number(output.partySize)
+			};
+		}
+		return null;
+	}
 </script>
 
 <svelte:head><title>Concierge</title></svelte:head>
 
 <main class="flex min-h-0 w-full flex-1 flex-col pb-6">
 	<div class="mx-auto flex min-h-0 w-full max-w-2xl flex-1 flex-col">
-		{#if chat.messages.length}
+		{#if !passportOpen && chat.messages.length}
 			<button
 				type="button"
 				class="self-end text-xs text-primary-foreground/60 hover:text-primary-foreground disabled:opacity-50"
@@ -168,170 +203,232 @@
 			class="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto overscroll-contain py-10"
 			aria-live="polite"
 		>
-			{#each chat.messages as message (message.id)}
-				{@const places = mapboxPlaces(message)}
-				{@const inspection = reservationInspection(message)}
-				<Message.Root align={message.role === 'user' ? 'end' : 'start'}>
-					<Message.Content>
-						<Bubble.Root variant={message.role === 'user' ? 'secondary' : 'ghost'}>
-							<Bubble.Content class="whitespace-pre-wrap">
-								{#each message.parts as part, index (index)}
-									{#if part.type === 'text'}{part.text}{/if}
-								{/each}
-							</Bubble.Content>
-						</Bubble.Root>
-						{#if message.role === 'assistant' && places.length}
-							{#if data.mapboxToken}
-								<div class="mx-3 w-full max-w-xl">
-									<MapWidget
-										{places}
-										token={data.mapboxToken}
-										selectedId={selectedPlace?.id ?? null}
-										onSelect={(place) => (selectedPlace = { id: place.id, name: place.name })}
-									/>
+			{#if passportOpen}
+				<PassportLedger visits={data.visits} atmospheres={data.atmospheres} error={form?.message} />
+			{:else}
+				{#each chat.messages as message (message.id)}
+					{@const places = mapboxPlaces(message)}
+					{@const inspection = reservationInspection(message)}
+					{@const checkout = checkoutObservation(message)}
+					<Message.Root align={message.role === 'user' ? 'end' : 'start'}>
+						<Message.Content>
+							<Bubble.Root variant={message.role === 'user' ? 'secondary' : 'ghost'}>
+								<Bubble.Content class="whitespace-pre-wrap">
+									{#each message.parts as part, index (index)}
+										{#if part.type === 'text'}{part.text}{/if}
+									{/each}
+								</Bubble.Content>
+							</Bubble.Root>
+							{#if message.role === 'assistant' && places.length}
+								{#if data.mapboxToken}
+									<div class="mx-3 w-full max-w-xl">
+										<MapWidget
+											{places}
+											token={data.mapboxToken}
+											selectedId={selectedPlace?.id ?? null}
+											onSelect={(place) => (selectedPlace = { id: place.id, name: place.name })}
+										/>
+									</div>
+								{/if}
+								<select
+									aria-label="Select a place from map results"
+									class="mx-3 max-w-full rounded-lg border border-primary-foreground/25 bg-secondary px-3 py-2 text-xs text-primary-foreground"
+									value={selectedPlace?.id ?? ''}
+									onchange={(event) => {
+										const place = places.find(({ id }) => id === event.currentTarget.value);
+										selectedPlace = place ? { id: place.id, name: place.name } : null;
+									}}
+								>
+									<option value="">Select a place</option>
+									{#each places as place, index (`${place.id}-${index}`)}
+										<option value={place.id}>{place.name}</option>
+									{/each}
+								</select>
+							{/if}
+							{#if message.role === 'assistant' && inspection}
+								<ReservationCalendar
+									{inspection}
+									googleEnabled={data.googleEnabled}
+									calendarConnected={data.calendarConnected}
+									selectedTime={selectedSlot?.date === inspection.date &&
+									selectedSlot.venue === inspection.venue
+										? selectedSlot.time
+										: null}
+									selectedExperience={selectedSlot?.experience ?? null}
+									onSelectDate={(date) => {
+										selectedDate = date;
+										selectedSlot = null;
+									}}
+									onSelectTime={(time, experience) => {
+										selectedDate = inspection.date;
+										selectedSlot = {
+											venue: inspection.venue,
+											date: inspection.date,
+											partySize: inspection.partySize,
+											time,
+											...(experience ? { experience } : {}),
+											...(inspection.sourceUrl ? { sourceUrl: inspection.sourceUrl } : {})
+										};
+									}}
+								/>
+							{/if}
+							{#if message.role === 'assistant' && checkout}
+								<div
+									class="mx-3 rounded-lg border border-primary-foreground/20 bg-secondary p-3 text-sm"
+								>
+									<p>
+										{checkout.venue} · {checkout.date} · {checkout.time} · {checkout.partySize} guests{checkout.experience
+											? ` · ${checkout.experience}`
+											: ''}
+									</p>
+									<p class="mt-1 text-xs text-primary-foreground/65">
+										Provider checkout reached. No booking was submitted. Review the provider’s
+										terms; stop before payment. This temporary view expires soon.
+									</p>
+									<a
+										class="mt-2 inline-block text-xs underline underline-offset-2"
+										href={checkout.url}
+										target="_blank"
+										rel="noopener noreferrer">View checkout in live browser</a
+									>
 								</div>
 							{/if}
-							<select
-								aria-label="Select a place from map results"
-								class="mx-3 max-w-full rounded-lg border border-primary-foreground/25 bg-secondary px-3 py-2 text-xs text-primary-foreground"
-								value={selectedPlace?.id ?? ''}
-								onchange={(event) => {
-									const place = places.find(({ id }) => id === event.currentTarget.value);
-									selectedPlace = place ? { id: place.id, name: place.name } : null;
-								}}
-							>
-								<option value="">Select a place</option>
-								{#each places as place, index (`${place.id}-${index}`)}
-									<option value={place.id}>{place.name}</option>
-								{/each}
-							</select>
-						{/if}
-						{#if message.role === 'assistant' && inspection}
-							<ReservationCalendar
-								{inspection}
-								selectedTime={selectedSlot?.date === inspection.date &&
-								selectedSlot.venue === inspection.venue
-									? selectedSlot.time
-									: null}
-								onSelectDate={(date) => {
-									selectedDate = date;
-									selectedSlot = null;
-								}}
-								onSelectTime={(time) => {
-									selectedDate = inspection.date;
-									selectedSlot = {
-										venue: inspection.venue,
-										date: inspection.date,
-										partySize: inspection.partySize,
-										time
-									};
-								}}
-							/>
-						{/if}
-						{#if message.role === 'assistant' && hasMapboxResult(message)}
-							<a
-								href="https://www.mapbox.com/about/maps/"
-								class="px-3 text-xs text-primary-foreground/70 underline-offset-2 hover:underline"
-								target="_blank"
-								rel="noopener noreferrer">© Mapbox and its suppliers · Terms</a
-							>
-						{/if}
-					</Message.Content>
-				</Message.Root>
-			{:else}
-				<div class="my-auto w-full space-y-5">
-					<div class="scene-rail mx-auto flex w-full max-w-2xl snap-x gap-4 overflow-x-auto pb-2">
-						{#each sceneCards as scene (scene.atmosphere)}
-							<button
-								type="button"
-								class="scene-card w-[46%] flex-none snap-start text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-foreground"
-								onclick={() => {
-									input = `${scene.title}. Help me find a place and check if I can reserve it.`;
-									messageField?.focus();
-								}}
-							>
-								<span
-									class="scene-frame relative block aspect-square overflow-hidden rounded-3xl bg-secondary"
+							{#if message.role === 'assistant' && hasMapboxResult(message)}
+								<a
+									href="https://www.mapbox.com/about/maps/"
+									class="px-3 text-xs text-primary-foreground/70 underline-offset-2 hover:underline"
+									target="_blank"
+									rel="noopener noreferrer">© Mapbox and its suppliers · Terms</a
 								>
-									<img
-										src={sceneImages[scene.atmosphere]}
-										alt=""
-										class="scene-image absolute top-0 -left-[10%] h-full w-[120%] max-w-none object-cover"
-									/>
-								</span>
-								<span class="scene-caption mt-3 block text-base font-medium text-primary-foreground"
-									>{sceneTitles[scene.atmosphere]}</span
+							{/if}
+						</Message.Content>
+					</Message.Root>
+				{:else}
+					<div class="my-auto w-full space-y-5">
+						<div class="scene-rail mx-auto flex w-full max-w-2xl snap-x gap-4 overflow-x-auto pb-2">
+							{#each sceneCards as scene (scene.atmosphere)}
+								<button
+									type="button"
+									class="scene-card w-[46%] flex-none snap-start text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-foreground"
+									onclick={() => {
+										input = `${scene.title}. Help me find a place and check if I can reserve it.`;
+										messageField?.focus();
+									}}
 								>
-								<span class="sr-only">{scene.detail}</span>
-							</button>
-						{/each}
+									<span
+										class="scene-frame relative block aspect-square overflow-hidden rounded-3xl bg-secondary"
+									>
+										<img
+											src={sceneImages[scene.atmosphere]}
+											alt=""
+											class="scene-image absolute top-0 -left-[10%] h-full w-[120%] max-w-none object-cover"
+										/>
+									</span>
+									<span
+										class="scene-caption mt-3 block text-base font-medium text-primary-foreground"
+										>{sceneTitles[scene.atmosphere]}</span
+									>
+									<span class="sr-only">{scene.detail}</span>
+								</button>
+							{/each}
+						</div>
+						{#if data.googleEnabled && !data.calendarConnected}
+							<form method="post" action="/?/connectCalendar" class="text-center">
+								<button type="submit" class="text-xs underline underline-offset-2"
+									>Connect Google Calendar to check conflicts</button
+								>
+							</form>
+						{/if}
 					</div>
-				</div>
-			{/each}
-			{#if chat.status === 'submitted'}
-				<p class="text-sm text-primary-foreground/55" role="status">Thinking…</p>
-			{/if}
-			{#if chat.error}
-				<div class="flex items-center gap-3 text-sm text-destructive" role="alert">
-					<span>That message didn't go through.</span>
-					<button type="button" class="underline" onclick={() => void chat.regenerate()}
-						>Retry</button
-					>
-				</div>
+				{/each}
+				{#if chat.status === 'submitted'}
+					<p class="text-sm text-primary-foreground/55" role="status">Thinking…</p>
+				{/if}
+				{#if chat.error}
+					<div class="flex items-center gap-3 text-sm text-destructive" role="alert">
+						<span>That message didn't go through.</span>
+						<button type="button" class="underline" onclick={() => void chat.regenerate()}
+							>Retry</button
+						>
+					</div>
+				{/if}
 			{/if}
 		</div>
 
-		{#if !data.chatConfigured}
-			<p class="mb-3 text-center text-sm text-primary-foreground/60" role="status">
-				Add OPENROUTER_API_KEY to enable chat.
-			</p>
-		{/if}
-		{#if selectedPlace}
-			<div class="mb-2 flex items-center justify-between px-2 text-xs text-primary-foreground/70">
-				<span>Selected: {selectedPlace.name}</span>
-				<button type="button" class="underline" onclick={() => (selectedPlace = null)}>Clear</button
-				>
-			</div>
-		{/if}
-		{#if selectedDate}
-			<div class="mb-2 flex items-center justify-between px-2 text-xs text-primary-foreground/70">
-				<span
-					>Selected: {selectedDate}{selectedSlot
-						? ` · ${selectedSlot.venue} at ${selectedSlot.time}`
-						: ''}</span
-				>
-				<button
-					type="button"
-					class="underline"
-					onclick={() => {
-						selectedDate = null;
-						selectedSlot = null;
-					}}>Clear</button
-				>
-			</div>
-		{/if}
-		<form
-			onsubmit={send}
-			class="flex shrink-0 items-end gap-3 rounded-4xl border border-primary-foreground/20 bg-secondary p-3"
-		>
-			<label for="message" class="sr-only">Your reservation request</label>
-			<textarea
-				id="message"
-				bind:this={messageField}
-				bind:value={input}
-				rows="2"
-				placeholder="Coffee, brunch, or dinner—where, when, and for how many?"
-				class="min-h-12 flex-1 resize-none border-0 bg-transparent text-sm text-primary-foreground placeholder:text-primary-foreground/45 focus:ring-0"
-				disabled={!data.chatConfigured}></textarea>
-			<button
-				type="submit"
-				aria-label="Send message"
-				class="flex size-11 shrink-0 items-center justify-center rounded-xl text-primary-foreground transition-colors hover:bg-primary-foreground/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-foreground active:bg-primary-foreground/15 disabled:text-primary-foreground/35 disabled:hover:bg-transparent"
-				disabled={!data.chatConfigured || !input.trim() || chat.status !== 'ready'}
+		{#if !passportOpen}
+			{#if !data.chatConfigured}
+				<p class="mb-3 text-center text-sm text-primary-foreground/60" role="status">
+					Add OPENROUTER_API_KEY to enable chat.
+				</p>
+			{/if}
+			{#if form?.message}
+				<p class="mb-3 text-center text-sm text-destructive" role="alert">{form.message}</p>
+			{/if}
+			{#if selectedPlace}
+				<div class="mb-2 flex items-center justify-between px-2 text-xs text-primary-foreground/70">
+					<span>Selected: {selectedPlace.name}</span>
+					<button type="button" class="underline" onclick={() => (selectedPlace = null)}
+						>Clear</button
+					>
+				</div>
+			{/if}
+			{#if selectedDate}
+				<div class="mb-2 flex items-center justify-between px-2 text-xs text-primary-foreground/70">
+					<span
+						>Selected: {selectedDate}{selectedSlot
+							? ` · ${selectedSlot.venue} at ${selectedSlot.time}${selectedSlot.experience ? ` · ${selectedSlot.experience}` : ''}`
+							: ''}</span
+					>
+					<button
+						type="button"
+						class="underline"
+						onclick={() => {
+							selectedDate = null;
+							selectedSlot = null;
+						}}>Clear</button
+					>
+				</div>
+				{#if selectedSlot?.sourceUrl}
+					<button
+						type="button"
+						class="mb-2 self-end rounded-lg border border-primary-foreground/25 px-3 py-1.5 text-xs hover:bg-primary-foreground/10 disabled:opacity-50"
+						disabled={chat.status !== 'ready'}
+						onclick={() =>
+							void chat.sendMessage({
+								text: 'Continue my selected time to checkout. Stop before entering guest or payment details or submitting.'
+							})}>Continue to checkout</button
+					>
+				{/if}
+			{/if}
+			<form
+				onsubmit={send}
+				class="flex shrink-0 items-end gap-3 rounded-4xl border border-primary-foreground/20 bg-secondary p-3"
 			>
-				<SFIcon icon="arrow-up" size="md" weight="semibold" />
-			</button>
-		</form>
+				<label for="message" class="sr-only">Your reservation request</label>
+				<textarea
+					id="message"
+					bind:this={messageField}
+					bind:value={input}
+					enterkeyhint="send"
+					onkeydown={(event) => {
+						if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
+						event.preventDefault();
+						event.currentTarget.form?.requestSubmit();
+					}}
+					rows="2"
+					placeholder="Coffee, brunch, or dinner—where, when, and for how many?"
+					class="min-h-12 flex-1 resize-none border-0 bg-transparent text-sm text-primary-foreground placeholder:text-primary-foreground/45 focus:ring-0"
+					disabled={!data.chatConfigured}></textarea>
+				<button
+					type="submit"
+					aria-label="Send message"
+					class="flex size-11 shrink-0 items-center justify-center rounded-xl text-primary-foreground transition-colors hover:bg-primary-foreground/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-foreground active:bg-primary-foreground/15 disabled:text-primary-foreground/35 disabled:hover:bg-transparent"
+					disabled={!data.chatConfigured || !input.trim() || chat.status !== 'ready'}
+				>
+					<SFIcon icon="arrow-up" size="md" weight="semibold" />
+				</button>
+			</form>
+		{/if}
 	</div>
 </main>
 

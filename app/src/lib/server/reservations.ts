@@ -1,4 +1,4 @@
-import { browserbase, Stagehand } from '@browserbasehq/stagehand';
+import { browserbase, Stagehand, type Page } from '@browserbasehq/stagehand';
 import * as Sentry from '@sentry/sveltekit';
 
 type ReservationQuery = {
@@ -8,6 +8,43 @@ type ReservationQuery = {
 	date?: unknown;
 	partySize?: unknown;
 };
+
+const readCards = (page: Page) =>
+	page.evaluate(() => {
+		const buttons = [...document.querySelectorAll('button')];
+		const visible = (button: Element) =>
+			button.getClientRects().length > 0 && getComputedStyle(button).visibility === 'visible';
+		return [...document.querySelectorAll('h3')].flatMap((heading) => {
+			let card = heading as HTMLElement;
+			while (card.parentElement?.querySelectorAll('h3').length === 1) card = card.parentElement;
+			if (card.innerText.includes('No availability on this date')) return [];
+			const cardButtons = [...card.querySelectorAll('button')].filter(visible);
+			const times = [
+				...new Set(
+					cardButtons
+						.map((button) => button.textContent?.trim() ?? '')
+						.filter((label) => /^\d{1,2}:\d{2} [AP]M$/.test(label))
+				)
+			];
+			const more = cardButtons.find((button) =>
+				/^\d+ More times$/.test(button.textContent?.trim() ?? '')
+			);
+			return times.length || more
+				? [
+						{
+							name: heading.textContent?.trim() ?? '',
+							times,
+							moreButtonIndex: more ? buttons.indexOf(more) : -1,
+							timeButtonIndexes: Object.fromEntries(
+								cardButtons
+									.filter((button) => times.includes(button.textContent?.trim() ?? ''))
+									.map((button) => [button.textContent?.trim() ?? '', buttons.indexOf(button)])
+							)
+						}
+					]
+				: [];
+		});
+	});
 
 export async function findReservationPages(
 	input: ReservationQuery,
@@ -170,47 +207,12 @@ export async function findReservationPages(
 					}
 					sevenrooms.url = filteredUrl.toString();
 					inspectionStage = 'extract_times';
-					const readCards = () =>
-						page.evaluate(() => {
-							const buttons = [...document.querySelectorAll('button')];
-							const visible = (button: Element) =>
-								button.getClientRects().length > 0 &&
-								getComputedStyle(button).visibility === 'visible';
-							const experiences = [...document.querySelectorAll('h3')].flatMap((heading) => {
-								let card = heading as HTMLElement;
-								while (card.parentElement?.querySelectorAll('h3').length === 1) {
-									card = card.parentElement;
-								}
-								if (card.innerText.includes('No availability on this date')) return [];
-								const cardButtons = [...card.querySelectorAll('button')].filter(visible);
-								const times = [
-									...new Set(
-										cardButtons
-											.map((button) => button.textContent?.trim() ?? '')
-											.filter((label) => /^\d{1,2}:\d{2} [AP]M$/.test(label))
-									)
-								];
-								const more = cardButtons.find((button) =>
-									/^\d+ More times$/.test(button.textContent?.trim() ?? '')
-								);
-								return times.length || more
-									? [
-											{
-												name: heading.textContent?.trim() ?? '',
-												times,
-												moreButtonIndex: more ? buttons.indexOf(more) : -1
-											}
-										]
-									: [];
-							});
-							return experiences;
-						});
-					let experiences = await readCards();
+					let experiences = await readCards(page);
 					for (let attempt = 0; attempt < 12; attempt++) {
 						const more = experiences.find((experience) => experience.moreButtonIndex >= 0);
 						if (!more) break;
 						await page.locator('button').nth(more.moreButtonIndex).click();
-						experiences = await readCards();
+						experiences = await readCards(page);
 					}
 					const visibleTimes = [...new Set(experiences.flatMap((experience) => experience.times))];
 					inspectSpan.setAttribute('reservation.visible_time_count', visibleTimes.length);
@@ -252,5 +254,227 @@ export async function findReservationPages(
 	} catch {
 		Sentry.captureMessage('Reservation page search failed', 'warning');
 		return { error: 'Reservation page search is unavailable right now.' };
+	}
+}
+
+export async function prepareReservation(
+	slot: {
+		venue: string;
+		date: string;
+		partySize: number;
+		time: string;
+		experience?: string;
+		sourceUrl: string;
+	},
+	apiKey: string | undefined
+) {
+	if (!apiKey) return { status: 'error', detail: 'Reservation browser is not configured.' };
+	let source: URL;
+	try {
+		source = new URL(slot.sourceUrl);
+	} catch {
+		return { status: 'error', detail: 'Invalid reservation page.' };
+	}
+	const slug = /^\/explore\/([a-z0-9-]+)\/reservations\/create\/search\/?$/.exec(
+		source.pathname
+	)?.[1];
+	if (
+		source.protocol !== 'https:' ||
+		!['sevenrooms.com', 'www.sevenrooms.com'].includes(source.hostname) ||
+		!slug ||
+		slug.replace(/[^a-z0-9]/g, '') !== slot.venue.toLowerCase().replace(/[^a-z0-9]/g, '') ||
+		!/^\d{4}-\d{2}-\d{2}$/.test(slot.date) ||
+		!/^\d{1,2}:\d{2} [AP]M$/.test(slot.time) ||
+		!Number.isInteger(slot.partySize) ||
+		slot.partySize < 1 ||
+		slot.partySize > 12
+	)
+		return { status: 'error', detail: 'Reservation selection does not match its provider page.' };
+
+	let browser: Awaited<ReturnType<typeof browserbase.launch>> | undefined;
+	let stagehand: Awaited<ReturnType<typeof Stagehand.create>> | undefined;
+	let keepSession = false;
+	let stage = 'launch';
+	const sessionDeadline = Math.floor(Date.now() / 1_000) + 300;
+	try {
+		browser = await browserbase.launch({ apiKey, keepAlive: true, api_timeout: 300 });
+		stagehand = await Stagehand.create({ browser });
+		const [page] = await browser.context.pages();
+		const url = new URL(source.pathname, source.origin);
+		url.searchParams.set('date', slot.date);
+		url.searchParams.set('party_size', String(slot.partySize));
+		stage = 'verify_slot';
+		await page.goto(url.toString());
+		const dateLabel = new Date(`${slot.date}T00:00:00Z`).toLocaleDateString('en-US', {
+			timeZone: 'UTC',
+			month: 'short',
+			day: 'numeric'
+		});
+		const fullDateLabel = new Date(`${slot.date}T00:00:00Z`).toLocaleDateString('en-US', {
+			timeZone: 'UTC',
+			month: 'long',
+			day: 'numeric'
+		});
+		let tree = '';
+		let filtersMatch = false;
+		for (let attempt = 0; attempt < 8; attempt++) {
+			filtersMatch = await page.evaluate(
+				({ dateLabel, partySize }) => {
+					const labels = [...document.querySelectorAll('button')].map(
+						(button) => button.textContent?.replace(/\s+/g, '') ?? ''
+					);
+					return (
+						labels.includes(`Date${dateLabel.replace(/\s+/g, '')}`) &&
+						labels.includes(`Guests${partySize}Guests`)
+					);
+				},
+				{ dateLabel, partySize: slot.partySize }
+			);
+			if (filtersMatch) break;
+			await new Promise((resolve) => setTimeout(resolve, 1_000));
+		}
+		if (!filtersMatch || new URL(await page.url()).searchParams.get('date') !== slot.date)
+			return { status: 'error', detail: 'Provider date or party size could not be verified.' };
+		let cards = await readCards(page);
+		for (let attempt = 0; attempt < 20; attempt++) {
+			const more = cards.find(
+				(card) => (!slot.experience || card.name === slot.experience) && card.moreButtonIndex >= 0
+			);
+			if (more) await page.locator('button').nth(more.moreButtonIndex).click();
+			else if (
+				cards.some(
+					(card) =>
+						(!slot.experience || card.name === slot.experience) && card.times.includes(slot.time)
+				)
+			)
+				break;
+			else await new Promise((resolve) => setTimeout(resolve, 1_000));
+			cards = await readCards(page);
+		}
+		if (
+			cards.some(
+				(card) => (!slot.experience || card.name === slot.experience) && card.moreButtonIndex >= 0
+			)
+		)
+			return { status: 'error', detail: 'Provider times could not be fully inspected.' };
+		const matches = cards.filter(
+			(card) =>
+				card.times.includes(slot.time) && (!slot.experience || card.name === slot.experience)
+		);
+		if (!matches.length)
+			return {
+				status: 'not_verified',
+				detail: 'The selected time could not be verified on the current provider page.'
+			};
+		if (matches.length !== 1)
+			return {
+				status: 'error',
+				detail: 'The time appears under multiple experiences; choose one on the provider.'
+			};
+		stage = 'advance';
+		await page.locator('button').nth(matches[0].timeButtonIndexes[slot.time]).click();
+		for (let attempt = 0; attempt < 8; attempt++) {
+			tree = await page.evaluate(() => document.body.innerText);
+			if (
+				tree.includes(slot.time) &&
+				tree.toLowerCase().includes(`${slot.partySize} guests`) &&
+				tree.includes('Continue')
+			)
+				break;
+			await new Promise((resolve) => setTimeout(resolve, 500));
+		}
+		if (
+			!tree.includes(slot.time) ||
+			!tree.toLowerCase().includes(`${slot.partySize} guests`) ||
+			!tree.includes('Continue')
+		)
+			return { status: 'error', detail: 'The provider did not confirm the chosen slot.' };
+		const nextButton = await page.evaluate(() =>
+			[...document.querySelectorAll('button')].findIndex(
+				(button) =>
+					button.getClientRects().length > 0 &&
+					/^Continue(?:\b|$)/.test(button.textContent?.trim() ?? '')
+			)
+		);
+		if (nextButton < 0)
+			return { status: 'error', detail: 'Provider checkout action was not found.' };
+		await page.locator('button').nth(nextButton).click();
+		for (let attempt = 0; attempt < 10; attempt++) {
+			if (/\/checkout\//.test(new URL(await page.url()).pathname)) break;
+			if (/\/upgrades\//.test(new URL(await page.url()).pathname)) {
+				const upgrade = await page.evaluate(() => ({
+					zeroTotal: /Total:\s*\$0\.00/.test(document.body.innerText),
+					nextIndex: [...document.querySelectorAll('button,a')].findIndex(
+						(button) => button.getClientRects().length > 0 && button.textContent?.trim() === 'Next'
+					)
+				}));
+				if (upgrade.zeroTotal && upgrade.nextIndex >= 0) {
+					await page.locator('button,a').nth(upgrade.nextIndex).click();
+					break;
+				}
+			}
+			const skipButton = await page.evaluate(() =>
+				[...document.querySelectorAll('button,a')].findIndex(
+					(element) =>
+						element.getClientRects().length > 0 &&
+						/^(?:skip|no thanks|continue without)/i.test(element.textContent?.trim() ?? '')
+				)
+			);
+			if (skipButton >= 0) {
+				await page.locator('button,a').nth(skipButton).click();
+				break;
+			}
+			await new Promise((resolve) => setTimeout(resolve, 500));
+		}
+		stage = 'verify_checkout';
+		for (let attempt = 0; attempt < 8; attempt++) {
+			tree = await page.evaluate(() => document.body.innerText);
+			if (
+				/checkout|payment|guest details/i.test(tree) &&
+				tree.includes(slot.time) &&
+				(tree.includes(dateLabel) || tree.includes(fullDateLabel))
+			)
+				break;
+			await new Promise((resolve) => setTimeout(resolve, 1_000));
+		}
+		if (
+			!/checkout|payment|guest details/i.test(tree) ||
+			!tree.includes(slot.time) ||
+			(!tree.includes(dateLabel) && !tree.includes(fullDateLabel)) ||
+			!tree.includes(slot.venue) ||
+			!tree.toLowerCase().includes(`${slot.partySize} guests`) ||
+			!['sevenrooms.com', 'www.sevenrooms.com'].includes(new URL(await page.url()).hostname)
+		)
+			return { status: 'error', detail: 'Provider checkout could not be verified.' };
+		const sessionId = browser.sessionId;
+		if (!sessionId) return { status: 'error', detail: 'Provider browser session was unavailable.' };
+		if (sessionDeadline - Math.floor(Date.now() / 1_000) < 60)
+			return { status: 'error', detail: 'Provider checkout view timed out.' };
+		// ponytail: Keep one checkout view for at most five minutes; release early when usage justifies a close control.
+		keepSession = true;
+		Sentry.getActiveSpan()?.setAttribute('reservation.prepare_outcome', 'checkout_ready');
+		return {
+			status: 'checkout_ready',
+			provider: 'SevenRooms',
+			venue: slot.venue,
+			date: slot.date,
+			partySize: slot.partySize,
+			time: slot.time,
+			experience: matches[0].name,
+			checkedAt: new Date().toISOString(),
+			sessionId,
+			expiresAt: sessionDeadline,
+			detail: 'Provider checkout reached. No guest details, payment, or booking were submitted.'
+		};
+	} catch (cause) {
+		Sentry.withScope((scope) => {
+			scope.setTag('reservation.prepare_stage', stage);
+			scope.setTag('reservation.error_type', cause instanceof Error ? cause.name : 'unknown');
+			Sentry.captureMessage('SevenRooms checkout preparation failed', 'warning');
+		});
+		return { status: 'error', stage, detail: 'Provider checkout could not be prepared.' };
+	} finally {
+		await stagehand?.close().catch(() => undefined);
+		if (browser && !keepSession) await browser.close().catch(() => undefined);
 	}
 }

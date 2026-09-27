@@ -1,6 +1,6 @@
 import { env } from '$env/dynamic/private';
 import * as Sentry from '@sentry/sveltekit';
-import { findReservationPages } from './reservations';
+import { findReservationPages, prepareReservation } from './reservations';
 
 type Capability = {
 	description: string;
@@ -131,6 +131,20 @@ async function mapboxSearch(area: unknown, kind: unknown = 'restaurant') {
 }
 
 export const capabilities: Record<string, Capability> = {
+	'reservations.prepare': {
+		description:
+			'Recheck the user-selected SevenRooms time and advance to provider checkout. Stops before guest details, payment, or final booking submission. Only available after the user chooses Continue to checkout.',
+		input: {
+			venue: 'Selected venue',
+			date: 'Selected YYYY-MM-DD date',
+			partySize: 'Selected guest count',
+			time: 'Selected time',
+			experience: 'Selected SevenRooms experience, if the time appears under more than one',
+			sourceUrl: 'SevenRooms page from the verified search result'
+		},
+		run: (input) =>
+			prepareReservation(input as Parameters<typeof prepareReservation>[0], env.BROWSERBASE_API_KEY)
+	},
 	'reservations.find': {
 		description:
 			'Find reservation pages for a named restaurant or café, or search a public area directly as a fallback. A matching SevenRooms page may show expanded times for a specified date and party size. Many cafés have no reservation inventory. No booking is made.',

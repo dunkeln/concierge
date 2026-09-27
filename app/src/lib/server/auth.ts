@@ -8,6 +8,12 @@ import { db } from '$lib/server/db';
 
 export const githubEnabled = Boolean(env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET);
 export const googleEnabled = Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET);
+export const calendarScopes = [
+	'https://www.googleapis.com/auth/calendar.freebusy',
+	'https://www.googleapis.com/auth/calendar.calendarlist.readonly'
+];
+export const hasCalendarScopes = (scope: string | null | undefined) =>
+	calendarScopes.every((item) => scope?.split(',').includes(item));
 export const baseURL =
 	env.ORIGIN ??
 	(env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${env.VERCEL_PROJECT_PRODUCTION_URL}` : undefined);
@@ -40,6 +46,7 @@ export const auth = betterAuth({
 	secret: env.BETTER_AUTH_SECRET,
 	database: drizzleAdapter(db, { provider: 'pg' }),
 	emailAndPassword: { enabled: true },
+	account: { encryptOAuthTokens: true, accountLinking: { allowDifferentEmails: true } },
 	...(appleEnabled && { trustedOrigins: ['https://appleid.apple.com'] }),
 	socialProviders: {
 		...(githubEnabled && {

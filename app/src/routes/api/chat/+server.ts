@@ -1,6 +1,7 @@
 import { env } from '$env/dynamic/private';
 import { error, json } from '@sveltejs/kit';
 import { createOpenAI } from '@ai-sdk/openai';
+import { SignJWT } from 'jose';
 import * as Sentry from '@sentry/sveltekit';
 import {
 	convertToModelMessages,
@@ -23,6 +24,7 @@ const [, modelId, system] = stage;
 
 export const POST: RequestHandler = async ({ request, locals }) => {
 	if (!locals.user) error(401, 'Sign in to chat.');
+	const userId = locals.user.id;
 	if (!env.OPENROUTER_API_KEY) return json({ error: 'Chat is not configured.' }, { status: 503 });
 
 	const raw = await request.text();
@@ -89,11 +91,21 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		selectedDate = dateSelection;
 	}
 	const slotSelection = (payload as { selectedSlot?: unknown }).selectedSlot;
-	let selectedSlot: { venue: string; date: string; partySize: number; time: string } | null = null;
+	let selectedSlot: {
+		venue: string;
+		date: string;
+		partySize: number;
+		time: string;
+		experience?: string;
+		sourceUrl?: string;
+	} | null = null;
 	if (slotSelection != null) {
 		if (typeof slotSelection !== 'object' || Array.isArray(slotSelection))
 			error(400, 'Invalid time.');
-		const { venue, date, partySize, time } = slotSelection as Record<string, unknown>;
+		const { venue, date, partySize, time, experience, sourceUrl } = slotSelection as Record<
+			string,
+			unknown
+		>;
 		if (
 			typeof venue !== 'string' ||
 			!venue.trim() ||
@@ -103,11 +115,31 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			(partySize as number) < 1 ||
 			(partySize as number) > 12 ||
 			typeof time !== 'string' ||
-			!/^\d{1,2}:\d{2} [AP]M$/.test(time)
+			!/^\d{1,2}:\d{2} [AP]M$/.test(time) ||
+			(experience !== undefined &&
+				(typeof experience !== 'string' || !experience.trim() || experience.length > 100)) ||
+			(sourceUrl !== undefined && (typeof sourceUrl !== 'string' || sourceUrl.length > 500))
 		)
 			error(400, 'Invalid time.');
-		selectedSlot = { venue, date: selectedDate!, partySize: partySize as number, time };
+		selectedSlot = {
+			venue,
+			date: selectedDate!,
+			partySize: partySize as number,
+			time,
+			...(typeof experience === 'string' ? { experience } : {}),
+			...(typeof sourceUrl === 'string' ? { sourceUrl } : {})
+		};
 	}
+	const prepareRequested =
+		selectedSlot?.sourceUrl &&
+		validated.data
+			.at(-1)
+			?.parts.some(
+				(part) =>
+					part.type === 'text' &&
+					part.text ===
+						'Continue my selected time to checkout. Stop before entering guest or payment details or submitting.'
+			);
 
 	const openrouter = createOpenAI({
 		apiKey: env.OPENROUTER_API_KEY,
@@ -163,10 +195,12 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 						additionalProperties: false
 					}),
 					execute: async () => ({
-						capabilities: Object.entries(capabilities).map(([name, capability]) => {
-							discovered.add(name);
-							return { name, description: capability.description, input: capability.input };
-						})
+						capabilities: Object.entries(capabilities)
+							.filter(([name]) => name !== 'reservations.prepare' || prepareRequested)
+							.map(([name, capability]) => {
+								discovered.add(name);
+								return { name, description: capability.description, input: capability.input };
+							})
 					})
 				}),
 				execute: tool({
@@ -180,6 +214,27 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 					execute: async ({ name, input }) => {
 						if (!discovered.has(name) || !Object.hasOwn(capabilities, name)) {
 							return { error: 'Search for this capability before executing it.' };
+						}
+						if (name === 'reservations.prepare') {
+							if (!prepareRequested || !selectedSlot?.sourceUrl)
+								return { error: 'Select a time and choose Continue to checkout first.' };
+							const outcome = (await Sentry.startSpan(
+								{ name: 'capability.reservations.prepare', op: 'agent.tool' },
+								() => capabilities[name].run(selectedSlot as Record<string, unknown>)
+							)) as Record<string, unknown>;
+							if (
+								outcome.status !== 'checkout_ready' ||
+								typeof outcome.sessionId !== 'string' ||
+								typeof outcome.expiresAt !== 'number'
+							)
+								return outcome;
+							const { sessionId, expiresAt, ...observation } = outcome;
+							const ticket = await new SignJWT({ sid: sessionId })
+								.setProtectedHeader({ alg: 'HS256' })
+								.setSubject(userId)
+								.setExpirationTime(expiresAt)
+								.sign(new TextEncoder().encode(env.BETTER_AUTH_SECRET));
+							return { ...observation, viewPath: `/api/reservations/view?ticket=${ticket}` };
 						}
 						return Sentry.startSpan({ name: `capability.${name}`, op: 'agent.tool' }, () =>
 							capabilities[name].run(input)
@@ -202,9 +257,22 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			},
 			onEnd: endTrace,
 			onAbort: endTrace,
-			onError: () => {
+			onError: ({ error: streamError }) => {
 				span.setAttribute('outcome', 'error');
-				Sentry.captureMessage('Chat stream failed', 'warning');
+				Sentry.withScope((scope) => {
+					scope.setTag(
+						'chat.error_type',
+						streamError instanceof Error ? streamError.name : 'unknown'
+					);
+					if (
+						typeof streamError === 'object' &&
+						streamError !== null &&
+						'statusCode' in streamError &&
+						typeof streamError.statusCode === 'number'
+					)
+						scope.setTag('chat.status_code', streamError.statusCode);
+					Sentry.captureMessage('Chat stream failed', 'warning');
+				});
 				endTrace();
 			}
 		});
