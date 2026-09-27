@@ -8,6 +8,7 @@
 	import MapWidget from '$lib/MapWidget.svelte';
 	import ReservationCalendar from '$lib/ReservationCalendar.svelte';
 	import PassportLedger from '$lib/PassportLedger.svelte';
+	import { renderMarkdown } from '$lib/markdown';
 	import { scenarios } from '$lib/onboarding';
 	import type { PageProps } from './$types';
 
@@ -213,9 +214,17 @@
 					<Message.Root align={message.role === 'user' ? 'end' : 'start'}>
 						<Message.Content>
 							<Bubble.Root variant={message.role === 'user' ? 'secondary' : 'ghost'}>
-								<Bubble.Content class="whitespace-pre-wrap">
+								<Bubble.Content
+									class={message.role === 'assistant'
+										? 'prose prose-sm max-w-none prose-invert prose-headings:font-medium prose-headings:text-inherit prose-p:my-2 prose-p:leading-relaxed prose-a:text-inherit prose-a:underline-offset-4 prose-strong:text-inherit prose-code:text-inherit prose-pre:overflow-x-auto prose-pre:rounded-xl prose-pre:bg-secondary'
+										: 'whitespace-pre-wrap'}
+								>
 									{#each message.parts as part, index (index)}
-										{#if part.type === 'text'}{part.text}{/if}
+										{#if part.type === 'text'}
+											{#if message.role === 'assistant'}{@html renderMarkdown(
+													part.text
+												)}{:else}{part.text}{/if}
+										{/if}
 									{/each}
 								</Bubble.Content>
 							</Bubble.Root>
