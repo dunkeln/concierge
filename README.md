@@ -32,9 +32,9 @@ For calendar conflicts, enable Google Calendar API on the existing Google OAuth 
 
 In another terminal, run `bun run test:auth`, sign in with your own local account, complete onboarding if prompted, then stop the recorder with Ctrl+C. This saves a git-ignored Playwright session. Run `bun run test:e2e` to check the chat calendar and selected-slot payload with a mocked chat response. No reservation provider is called.
 
-Run `bun run eval:local` for two Braintrust cases using synthetic provider evidence and the configured OpenRouter model. It scores visible-time grounding and invented booking claims; `--no-send-logs` keeps the evaluation results local. This does not test a live reservation page or completed booking.
+Run `bun run eval:local` in `app/` to replay seven synthetic reservation scenarios against the configured OpenRouter model. The eval checks tool discovery, capability choice, per-stop arguments, grounded times, and checkout wording. It reads the current intake prompt and keeps results local. Run `bun run eval:braintrust` to send the same synthetic run to the dedicated Concierge Braintrust project for comparison. Braintrust code lives in `app/tests/`, outside the app runtime. These cases do not test a live reservation page, browser transport, or completed booking.
 
-`app/tests/snapshots.md` records real multi-turn requests and their behavioral checks for future journey evals. These snapshots are not run by the current single-response Braintrust command.
+`app/tests/snapshots.md` records observed journeys that motivate the eval cases. Multi-turn browser journeys and provider behavior still need separate checks.
 
 ## Scope and cuts
 

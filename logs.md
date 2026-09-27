@@ -234,3 +234,10 @@ Record a new entry only when a failure or limitation is observed and useful to r
 - Verification: A local Ai Fiori probe reached the selected date and party and extracted times, but the page also showed "Next available date" times; those extracted times are not verified for the requested date. Both production probes failed to inspect.
 - Regression guard: Repeat a dated venue query and check that the response either contains times verified against page buttons or labels the links as uninspected.
 - Remaining limit: Time extraction must distinguish selected-date buttons from "Next available date" buttons before any extracted time can be treated as availability; no booking flow has been proven.
+### 2026-09-27 — Reservation eval missed agent decisions
+
+- Evidence: The previous Braintrust eval supplied provider facts inside a single prompt, so it could not score `search`, `execute`, per-stop arguments, or a selected-time checkout. The first tool-use run scored 60% on grounded times and 80% on response state.
+- Cause: Single-response cases bypassed the agent loop. Two new scorer failures were measurement errors: curly apostrophes in “can’t verify” and a checkout time selected by the user were marked wrong.
+- Change: Replayed seven synthetic cases through the current intake prompt and two public tool schemas in `app/tests/reservation.eval.ts`; corrected those scorer checks. Kept Braintrust out of `app/src`.
+- Verification: `bun run check` passed; the local eval and final Concierge Braintrust experiment scored 100% on six deterministic checks across seven synthetic cases.
+- Remaining limit: The score change came from scorer corrections, not an app behavior fix. This eval does not cover real provider pages, chat transport, or production traces.
