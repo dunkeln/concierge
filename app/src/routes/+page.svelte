@@ -491,8 +491,8 @@
 						{/if}
 					</div>
 				{/each}
-				{#if browserSessions.length}
-					<BrowserPreviewStack sessions={browserSessions} />
+				{#if browserSessions.some((session) => session.state === 'open')}
+					<BrowserPreviewStack sessions={browserSessions.filter((session) => session.state === 'open')} />
 				{/if}
 				{#if chat.status === 'submitted'}
 					<p class="text-sm text-primary-foreground/55" role="status">Thinking…</p>
