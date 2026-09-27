@@ -155,7 +155,7 @@ export const capabilities: Record<string, Capability> = {
 	},
 	'reservations.find': {
 		description:
-			'Find reservation pages for a named restaurant or café, or search a public area directly as a fallback. A matching SevenRooms page may show expanded times for a specified date and party size. Many cafés have no reservation inventory. No booking is made.',
+			'Find nearby restaurants or cafés in a public area and their reservation pages in one call. A matching SevenRooms page may show expanded times for a specified date and party size. Place listings and other booking links are not verified availability. Call separately for each stop in a multi-stop plan. No booking is made.',
 		input: {
 			restaurant: 'Restaurant or café name from places.search, if known',
 			area: 'Public neighborhood and city, such as West Village, New York City',
@@ -163,10 +163,24 @@ export const capabilities: Record<string, Capability> = {
 			date: 'Optional requested date as YYYY-MM-DD',
 			partySize: 'Optional number of guests, 1–12'
 		},
-		run: (input) =>
-			findReservationPages(input, {
-				browserbase: env.BROWSERBASE_API_KEY
-			})
+		run: async (input) => {
+			const [reservation, discovery] = await Promise.all([
+				findReservationPages(input, { browserbase: env.BROWSERBASE_API_KEY }),
+				input.area ? geoapifySearch(input.area, input.kind) : null
+			]);
+			return discovery && 'places' in discovery
+				? {
+						...reservation,
+						area: discovery.area,
+						places: discovery.places,
+						attribution: discovery.attribution,
+						placeCoverage: 'Nearby candidates only; reservation inventory is checked separately.'
+					}
+				: {
+						...reservation,
+						...(discovery && 'error' in discovery ? { placeSearchError: discovery.error } : {})
+					};
+		}
 	},
 	'places.search': {
 		description:
