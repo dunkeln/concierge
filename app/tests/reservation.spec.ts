@@ -2,6 +2,44 @@ import { expect, test } from '@playwright/test';
 import { createUIMessageStream, createUIMessageStreamResponse } from 'ai';
 import { reservationCase as sample } from './reservation-case';
 
+test('chat shows actionable request errors', async ({ page }) => {
+	let calls = 0;
+	await page.route('**/api/chat', async (route) => {
+		calls++;
+		if (calls === 3) {
+			const response = createUIMessageStreamResponse({
+				stream: createUIMessageStream({
+					execute: ({ writer }) => {
+						writer.write({ type: 'start' });
+						writer.write({ type: 'error', errorText: 'The model is busy. Please retry shortly.' });
+					}
+				})
+			});
+			await route.fulfill({
+				status: 200,
+				headers: Object.fromEntries(response.headers),
+				body: await response.text()
+			});
+			return;
+		}
+		await route.fulfill({ status: calls === 1 ? 413 : 429, body: 'Rejected' });
+	});
+	await page.goto('/');
+	await page.getByLabel('Your reservation request').fill('Find dinner.');
+	await page.getByRole('button', { name: 'Send message' }).click();
+	await expect(page.getByRole('alert')).toContainText('This chat is too long. Start a new chat.');
+	await expect(page.getByRole('button', { name: 'Retry' })).toHaveCount(0);
+	await page.getByRole('button', { name: 'New chat' }).click();
+	await page.getByLabel('Your reservation request').fill('Find dinner.');
+	await page.getByRole('button', { name: 'Send message' }).click();
+	await expect(page.getByRole('alert')).toContainText('Too many requests. Try again shortly.');
+	await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible();
+	await page.getByRole('button', { name: 'New chat' }).click();
+	await page.getByLabel('Your reservation request').fill('Find dinner.');
+	await page.getByRole('button', { name: 'Send message' }).click();
+	await expect(page.getByRole('alert')).toContainText('The model is busy. Please retry shortly.');
+});
+
 test('answers calendar and text questions without duplicate sends', async ({ page }) => {
 	let calls = 0;
 	await page.route('**/api/chat', async (route) => {
@@ -38,7 +76,7 @@ test('answers calendar and text questions without duplicate sends', async ({ pag
 								request: { venue: sample.venue, date: sample.date, partySize: sample.partySize },
 								inspection: {
 									visibleTimes: sample.times,
-									checkedAt: sample.checkedAt,
+									checkedAt: new Date().toISOString(),
 									complete: true
 								},
 								availability: 'Visible times for the requested date and party.'
@@ -109,4 +147,59 @@ test('answers calendar and text questions without duplicate sends', async ({ pag
 	await page.getByRole('button', { name: 'Send', exact: true }).click();
 	await expect(page.getByText('Selection received.')).toBeVisible();
 	expect(calls).toBe(4);
+});
+
+test('expired reservation times require a new check', async ({ page }) => {
+	let calls = 0;
+	await page.route('**/api/chat', async (route) => {
+		calls++;
+		if (calls === 2) {
+			const message = route.request().postDataJSON().messages.at(-1);
+			expect(message.parts[0].text).toBe(
+				`Please check ${sample.venue} for ${sample.partySize} guests on ${sample.date}.`
+			);
+		}
+		const response = createUIMessageStreamResponse({
+			stream: createUIMessageStream({
+				execute: ({ writer }) => {
+					writer.write({ type: 'start' });
+					if (calls === 1) {
+						writer.write({
+							type: 'tool-input-available',
+							toolCallId: 'expired-search',
+							toolName: 'execute',
+							input: { name: 'reservations.find', input: sample }
+						});
+						writer.write({
+							type: 'tool-output-available',
+							toolCallId: 'expired-search',
+							output: {
+								request: { venue: sample.venue, date: sample.date, partySize: sample.partySize },
+								inspection: {
+									visibleTimes: sample.times,
+									checkedAt: new Date(Date.now() - 120_000).toISOString(),
+									complete: true
+								}
+							}
+						});
+					}
+					writer.write({ type: 'finish' });
+				}
+			})
+		});
+		await route.fulfill({
+			status: 200,
+			headers: Object.fromEntries(response.headers),
+			body: await response.text()
+		});
+	});
+
+	await page.goto('/');
+	await page.getByLabel('Your reservation request').fill('Find a table for two at Ai Fiori.');
+	await page.getByRole('button', { name: 'Send message' }).click();
+	const calendar = page.getByRole('region', { name: 'Reservation calendar' });
+	await expect(calendar.getByText('Times need a fresh check.')).toBeVisible();
+	await expect(calendar.getByRole('button', { name: sample.times[0] })).toHaveCount(0);
+	await calendar.getByRole('button', { name: 'Check again' }).click();
+	await expect.poll(() => calls).toBe(2);
 });

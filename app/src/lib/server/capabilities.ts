@@ -16,6 +16,9 @@ type GeoapifyArea = {
 	suburb?: string;
 	district?: string;
 	city?: string;
+	state?: string;
+	state_code?: string;
+	country?: string;
 	formatted?: string;
 	place_id?: string;
 	lat?: number;
@@ -49,10 +52,19 @@ function matchesArea(query: string, area: GeoapifyArea) {
 			.trim();
 	const [place, context] = query.split(',');
 	return (
-		[area.name, area.suburb, area.district, area.city, area.formatted?.split(',')[0]].some(
-			(value) => value && normalize(value) === normalize(place)
-		) &&
-		(!context || normalize(area.formatted ?? '').includes(normalize(context)))
+		[
+			area.name,
+			area.suburb,
+			area.district,
+			area.city,
+			area.formatted?.split(',')[0],
+			area.suburb && area.city ? `${area.suburb} ${area.city}` : undefined
+		].some((value) => value && normalize(value) === normalize(place)) &&
+		(!context ||
+			normalize(area.formatted ?? '').includes(normalize(context)) ||
+			[area.state, area.state_code, area.country].some(
+				(value) => value && normalize(value) === normalize(context)
+			))
 	);
 }
 
@@ -60,8 +72,13 @@ async function resolveArea(name: string) {
 	const key = name.toLocaleLowerCase();
 	const cached = areaCache.get(key);
 	if (cached) return cached;
+	const [place, city, ...rest] = name.split(',').map((part) => part.trim());
+	const repeatedCity = city && place.toLowerCase().endsWith(` ${city.toLowerCase()}`);
+	const query = repeatedCity
+		? [place.slice(0, -city.length).trim(), city, ...rest].join(', ')
+		: name;
 	const url = new URL('https://api.geoapify.com/v1/geocode/search');
-	url.searchParams.set('text', name);
+	url.searchParams.set('text', query);
 	url.searchParams.set('format', 'json');
 	url.searchParams.set('limit', '5');
 	const data = (await geoapifyJson(url, 'geoapify.geocode')) as { results?: GeoapifyArea[] };
@@ -71,9 +88,9 @@ async function resolveArea(name: string) {
 			Number.isFinite(result.lat) &&
 			Number.isFinite(result.lon) &&
 			['suburb', 'district', 'city', 'locality'].includes(result.result_type ?? '') &&
-			matchesArea(name, result)
+			matchesArea(query, result)
 	);
-	const requested = name.split(',')[0].toLowerCase();
+	const requested = query.split(',')[0].toLowerCase();
 	const area =
 		matches?.find((result) => result.formatted?.toLowerCase().startsWith(`${requested},`)) ??
 		matches?.[0];
@@ -147,9 +164,11 @@ export const capabilities: Record<string, Capability> = {
 			'Ask the user for missing information and end this turn. Render a reply field, with optional short choices. Do not use for facts you can find with another capability.',
 		input: {
 			question: 'One concise question for the user',
-			options: 'Optional array of up to four short answer choices; free text is always available'
+			options: 'Optional array of up to four short answer choices; free text is always available',
+			calendarView: 'Optional month, day, or time when a calendar helps answer the question',
+			date: 'Optional YYYY-MM-DD date to open the calendar on'
 		},
-		run: ({ question, options }) => {
+		run: ({ question, options, calendarView, date }) => {
 			if (typeof question !== 'string' || !question.trim() || question.length > 300)
 				return { error: 'Provide one question of at most 300 characters.' };
 			if (
@@ -161,7 +180,23 @@ export const capabilities: Record<string, Capability> = {
 					))
 			)
 				return { error: 'Provide up to four short answer choices.' };
-			return { kind: 'followup', question: question.trim(), options: options ?? [] };
+			if (calendarView !== undefined && !['month', 'day', 'time'].includes(String(calendarView)))
+				return { error: 'Choose month, day, or time for the calendar.' };
+			if (
+				date !== undefined &&
+				(typeof date !== 'string' ||
+					!/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+					!Number.isFinite(Date.parse(`${date}T00:00:00Z`)) ||
+					new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date)
+			)
+				return { error: 'Provide a valid calendar date.' };
+			return {
+				kind: 'followup',
+				question: question.trim(),
+				options: options ?? [],
+				...(calendarView ? { calendarView } : {}),
+				...(date ? { date } : {})
+			};
 		}
 	},
 	'reservations.prepare': {
@@ -186,9 +221,15 @@ export const capabilities: Record<string, Capability> = {
 			area: 'Public neighborhood and city, such as West Village, New York City',
 			kind: 'restaurant or cafe; defaults to restaurant',
 			date: 'Optional requested date as YYYY-MM-DD',
-			partySize: 'Optional number of guests, 1–12'
+			partySize: 'Optional number of guests, 1–12',
+			calendarView: 'Optional month, day, or time view for the reservation calendar'
 		},
 		run: async (input, onBrowserSession) => {
+			if (
+				input.calendarView !== undefined &&
+				!['month', 'day', 'time'].includes(String(input.calendarView))
+			)
+				return { error: 'Choose month, day, or time for the calendar.' };
 			const [reservation, discovery] = await Promise.all([
 				findReservationPages(input, { browserbase: env.BROWSERBASE_API_KEY }, onBrowserSession),
 				input.area ? geoapifySearch(input.area, input.kind) : null
@@ -196,6 +237,7 @@ export const capabilities: Record<string, Capability> = {
 			return discovery && 'places' in discovery
 				? {
 						...reservation,
+						...(input.calendarView ? { calendarView: input.calendarView } : {}),
 						area: discovery.area,
 						places: discovery.places,
 						attribution: discovery.attribution,
@@ -203,6 +245,7 @@ export const capabilities: Record<string, Capability> = {
 					}
 				: {
 						...reservation,
+						...(input.calendarView ? { calendarView: input.calendarView } : {}),
 						...(discovery && 'error' in discovery ? { placeSearchError: discovery.error } : {})
 					};
 		}
@@ -286,6 +329,7 @@ export const capabilities: Record<string, Capability> = {
 					unit: data.temperature!.unit,
 					condition: data.weatherCondition?.description?.text,
 					observedAt: data.currentTime,
+					checkedAt: new Date().toISOString(),
 					attribution: 'Source: Includes weather data from Google'
 				};
 			} catch {

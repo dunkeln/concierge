@@ -9,13 +9,19 @@ import type { RequestHandler } from './$types';
 export const GET: RequestHandler = async ({ locals, request, url }) => {
 	if (!locals.user) error(401, 'Sign in to check your calendar.');
 	const date = url.searchParams.get('date');
+	const month = url.searchParams.get('month');
 	if (
-		!date ||
-		!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(date) ||
-		!Number.isFinite(Date.parse(`${date}T00:00:00Z`)) ||
-		new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date
+		(date === null) === (month === null) ||
+		(date !== null &&
+			(!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(date) ||
+				!Number.isFinite(Date.parse(`${date}T00:00:00Z`)) ||
+				new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date)) ||
+		(month !== null &&
+			(!/^[0-9]{4}-[0-9]{2}$/.test(month) ||
+				!Number.isFinite(Date.parse(`${month}-01T00:00:00Z`)) ||
+				new Date(`${month}-01T00:00:00Z`).toISOString().slice(0, 7) !== month))
 	)
-		error(400, 'Invalid date.');
+		error(400, 'Invalid calendar range.');
 	const google = (
 		await db.query.account.findMany({
 			where: and(eq(account.userId, locals.user.id), eq(account.providerId, 'google')),
@@ -43,14 +49,17 @@ export const GET: RequestHandler = async ({ locals, request, url }) => {
 		if (calendars.nextPageToken) throw new Error('Calendar list exceeds 50 calendars');
 		const ids = calendars.items?.flatMap((item) => (item.id ? [item.id] : [])) ?? [];
 		if (!ids.length) throw new Error('No accessible calendars');
-		const midnight = new Date(`${date}T00:00:00Z`).getTime();
-		// ponytail: a three-day UTC window covers this local date across time zones; use venue time zones when provider data supplies them.
+		const midnight = new Date(`${date ?? `${month}-01`}T00:00:00Z`).getTime();
+		const end = month
+			? Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 1)
+			: midnight + 86_400_000;
+		// ponytail: UTC padding covers local dates across time zones; use venue time zones when provider data supplies them.
 		const freebusy = await fetch('https://www.googleapis.com/calendar/v3/freeBusy', {
 			method: 'POST',
 			headers: { ...headers, 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				timeMin: new Date(midnight - 86_400_000).toISOString(),
-				timeMax: new Date(midnight + 2 * 86_400_000).toISOString(),
+				timeMax: new Date(end + 86_400_000).toISOString(),
 				items: ids.map((id) => ({ id }))
 			}),
 			signal: AbortSignal.timeout(8_000)

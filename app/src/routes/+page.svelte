@@ -8,6 +8,7 @@
 	import MapWidget from '$lib/MapWidget.svelte';
 	import ReservationCalendar from '$lib/ReservationCalendar.svelte';
 	import FollowupWidget from '$lib/FollowupWidget.svelte';
+	import type { CalendarViewMode } from '$lib/CalendarView.svelte';
 	import BrowserPreviewStack from '$lib/BrowserPreviewStack.svelte';
 	import PassportLedger from '$lib/PassportLedger.svelte';
 	import { renderMarkdown } from '$lib/markdown';
@@ -138,6 +139,32 @@
 		open: boolean;
 	};
 	let browserSessions = $state<BrowserSession[]>([]);
+	type ChatFailure = { message: string; retry: boolean; signIn?: boolean };
+	let chatFailure = $derived.by((): ChatFailure | null => {
+		if (!chat.error) return null;
+		const error = chat.error as Error & { statusCode?: number };
+		const status = error.statusCode;
+		if (status === 401)
+			return { message: 'Your session expired. Sign in again.', retry: false, signIn: true };
+		if (status === 413)
+			return { message: 'This chat is too long. Start a new chat.', retry: false };
+		if (status === 400)
+			return { message: 'This chat could not be sent. Start a new chat.', retry: false };
+		if (status === 429) return { message: 'Too many requests. Try again shortly.', retry: true };
+		if (status === 503)
+			return { message: 'Chat service is unavailable. Try again later.', retry: true };
+		if (typeof status === 'number' && status >= 500)
+			return { message: 'Chat server failed. Please retry.', retry: true };
+		if (error.message === 'The model service has no available credits.')
+			return { message: error.message, retry: false };
+		if (
+			error.message === 'The model is busy. Please retry shortly.' ||
+			error.message === 'The model service is unavailable. Please retry.' ||
+			error.message === 'The assistant stopped before finishing. Please retry.'
+		)
+			return { message: error.message, retry: true };
+		return { message: 'The connection or response failed. Please retry.', retry: true };
+	});
 	const chat = new Chat({
 		onData: (part) => {
 			if (part.type !== 'data-browser') return;
@@ -217,12 +244,22 @@
 				Array.isArray(output.options) &&
 				output.options.every((option) => typeof option === 'string')
 			)
-				return { question: output.question, options: output.options as string[] };
+				return {
+					question: output.question,
+					options: output.options as string[],
+					calendarView: ['month', 'day', 'time'].includes(String(output.calendarView))
+						? (output.calendarView as CalendarViewMode)
+						: undefined,
+					date:
+						typeof output.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(output.date)
+							? output.date
+							: undefined
+				};
 		}
 		return null;
 	}
 
-	type Place = { id: string; name: string; lat: number; lon: number };
+	type Place = { id: string; name: string; lat: number; lon: number; categories?: string[] };
 	type Inspection = {
 		venue: string;
 		date: string;
@@ -230,6 +267,7 @@
 		sourceUrl?: string;
 		experiences?: { name: string; times: string[] }[];
 		times: string[];
+		calendarView?: CalendarViewMode;
 		complete: boolean;
 		checkedAt: string | null;
 		status: string;
@@ -275,6 +313,7 @@
 				request?: Record<string, unknown>;
 				inspection?: Record<string, unknown>;
 				availability?: unknown;
+				calendarView?: unknown;
 			} | null;
 			const request = output?.request;
 			const inspection = output?.inspection;
@@ -290,6 +329,10 @@
 					venue: request.venue,
 					date: request.date,
 					partySize: request.partySize,
+					...(typeof output?.calendarView === 'string' &&
+					['month', 'day', 'time'].includes(output.calendarView)
+						? { calendarView: output.calendarView as CalendarViewMode }
+						: {}),
 					...(typeof inspection?.url === 'string' ? { sourceUrl: inspection.url } : {}),
 					...(Array.isArray(inspection?.experiences)
 						? {
@@ -360,7 +403,7 @@
 					<Message.Root
 						align={message.role === 'user' || followup || inspections.length > 0 ? 'end' : 'start'}
 					>
-						<Message.Content>
+						<Message.Content class="gap-4">
 							{#if message.parts.some((part) => part.type === 'text' && part.text.trim())}
 								<Bubble.Root variant={message.role === 'user' ? 'secondary' : 'ghost'}>
 									<Bubble.Content
@@ -383,10 +426,16 @@
 								</Bubble.Root>
 							{/if}
 							{#if followup}
+								<Bubble.Root variant="secondary" class="max-w-md">
+									<Bubble.Content>{followup.question}</Bubble.Content>
+								</Bubble.Root>
 								<FollowupWidget
 									id={message.id}
-									question={followup.question}
 									options={followup.options}
+									calendarView={followup.calendarView}
+									date={followup.date}
+									calendarConnected={data.calendarConnected}
+									googleEnabled={data.googleEnabled}
 									disabled={!data.chatConfigured ||
 										chat.status !== 'ready' ||
 										pendingReplyMessageId !== null ||
@@ -402,8 +451,8 @@
 										{places}
 										token={data.geoapifyMapKey}
 										selectedId={selectedPlace?.id ?? null}
-										onSelect={(place) =>
-											(selectedPlace = { id: place.id, name: place.name, area: search.area })}
+									onSelect={(place) =>
+										(selectedPlace = { id: place.id, name: place.name, area: search.area })}
 									/>
 								</div>
 							{/each}
@@ -526,12 +575,16 @@
 				{#if chat.status === 'submitted'}
 					<p class="text-sm text-primary-foreground/55" role="status">Thinking…</p>
 				{/if}
-				{#if chat.error}
+				{#if chatFailure}
 					<div class="flex items-center gap-3 text-sm text-destructive" role="alert">
-						<span>That message didn't go through.</span>
-						<button type="button" class="underline" onclick={() => void chat.regenerate()}
-							>Retry</button
-						>
+						<span>{chatFailure.message}</span>
+						{#if chatFailure.retry}
+							<button type="button" class="underline" onclick={() => void chat.regenerate()}
+								>Retry</button
+							>
+						{:else if chatFailure.signIn}
+							<a class="underline" href="/login">Sign in</a>
+						{/if}
 					</div>
 				{/if}
 			{/if}
@@ -577,9 +630,7 @@
 			{#if selectedPlace}
 				<div class="mb-2 flex items-center justify-between px-2 text-xs text-primary-foreground/70">
 					<span>Selected: {selectedPlace.name}</span>
-					<button type="button" class="underline" onclick={() => (selectedPlace = null)}
-						>Clear</button
-					>
+					<button type="button" class="underline" onclick={() => (selectedPlace = null)}>Clear</button>
 				</div>
 			{/if}
 			{#if selectedDate}

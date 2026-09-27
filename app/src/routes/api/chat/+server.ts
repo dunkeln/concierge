@@ -15,6 +15,7 @@ import {
 } from 'ai';
 import intakeStage from '$lib/server/stages/intake.md?raw';
 import { capabilities } from '$lib/server/capabilities';
+import { isFresh, RESERVATION_TTL_MS, WEATHER_TTL_MS } from '$lib/freshness';
 import type { RequestHandler } from './$types';
 
 const stage = /^---\r?\nmodel: ([^\r\n]+)\r?\n---\r?\n([\s\S]+)$/.exec(intakeStage);
@@ -23,6 +24,18 @@ if (!stage || !allowedModels.has(stage[1]) || !stage[2].trim()) {
 	throw new Error('Invalid intake stage configuration.');
 }
 const [, modelId, system] = stage;
+
+function publicStreamError(streamError: unknown): string {
+	const status =
+		typeof streamError === 'object' && streamError !== null && 'statusCode' in streamError
+			? streamError.statusCode
+			: undefined;
+	if (status === 429) return 'The model is busy. Please retry shortly.';
+	if (status === 402) return 'The model service has no available credits.';
+	if (typeof status === 'number' && status >= 500)
+		return 'The model service is unavailable. Please retry.';
+	return 'The assistant stopped before finishing. Please retry.';
+}
 
 export const POST: RequestHandler = async ({ request, locals }) => {
 	if (!locals.user) error(401, 'Sign in to chat.');
@@ -164,6 +177,171 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			})
 		}))
 		.filter((message) => message.parts.length);
+	const recentFindings = validated.data
+		.slice(0, -1)
+		.flatMap((message) =>
+			message.role === 'assistant'
+				? message.parts.flatMap<Record<string, unknown>>((part) => {
+						if (part.type !== 'tool-execute' || part.state !== 'output-available') return [];
+						const output = part.output as Record<string, unknown> | null;
+						if (!output || typeof output !== 'object') return [];
+						if (typeof output.area === 'string' && Array.isArray(output.places)) {
+							return [
+								{
+									area: output.area.slice(0, 200),
+									provider: 'Geoapify place listing',
+									places: output.places.slice(0, 25).flatMap((place: unknown) => {
+										if (!place || typeof place !== 'object') return [];
+										const { name, address, categories, lat, lon } = place as Record<
+											string,
+											unknown
+										>;
+										if (
+											typeof name !== 'string' ||
+											typeof lat !== 'number' ||
+											!Number.isFinite(lat) ||
+											typeof lon !== 'number' ||
+											!Number.isFinite(lon)
+										)
+											return [];
+										return [
+											{
+												name: name.slice(0, 100),
+												...(typeof address === 'string' ? { address: address.slice(0, 200) } : {}),
+												categories: Array.isArray(categories)
+													? categories
+															.filter((value): value is string => typeof value === 'string')
+															.slice(0, 8)
+													: [],
+												lat,
+												lon
+											}
+										];
+									})
+								}
+							];
+						}
+						if (
+							Array.isArray(output.pages) &&
+							output.request &&
+							typeof output.request === 'object'
+						) {
+							return [
+								{
+									provider: 'reservation page search',
+									request: {
+										venue:
+											typeof (output.request as Record<string, unknown>).venue === 'string'
+												? String((output.request as Record<string, unknown>).venue).slice(0, 100)
+												: '',
+										date:
+											typeof (output.request as Record<string, unknown>).date === 'string'
+												? String((output.request as Record<string, unknown>).date).slice(0, 10)
+												: null
+									},
+									pages: output.pages.slice(0, 5).flatMap((page: unknown) => {
+										if (!page || typeof page !== 'object') return [];
+										const { title, url } = page as Record<string, unknown>;
+										return typeof title === 'string' && typeof url === 'string'
+											? [{ title: title.slice(0, 150), url: url.slice(0, 500) }]
+											: [];
+									})
+								}
+							];
+						}
+						return [];
+					})
+				: []
+		)
+		.slice(-2);
+	const timedFindings = validated.data
+		.slice(0, -1)
+		.flatMap((message) =>
+			message.role === 'assistant'
+				? message.parts.flatMap<{
+						kind: string;
+						checkedAt: string;
+						fresh: boolean;
+						reference: Record<string, unknown>;
+						value: Record<string, unknown>;
+					}>((part) => {
+						if (part.type !== 'tool-execute' || part.state !== 'output-available') return [];
+						const output = part.output as Record<string, unknown> | null;
+						if (!output || typeof output !== 'object') return [];
+						if (
+							typeof output.temperature === 'number' &&
+							Number.isFinite(output.temperature) &&
+							typeof output.checkedAt === 'string'
+						) {
+							return [
+								{
+									kind: 'weather',
+									checkedAt: output.checkedAt,
+									fresh:
+										isFresh(output.checkedAt, WEATHER_TTL_MS) &&
+										isFresh(output.observedAt, 20 * 60_000),
+									reference: {
+										latitude: typeof output.latitude === 'number' ? output.latitude : null,
+										longitude: typeof output.longitude === 'number' ? output.longitude : null
+									},
+									value: {
+										temperature: output.temperature,
+										unit: typeof output.unit === 'string' ? output.unit.slice(0, 20) : null,
+										condition:
+											typeof output.condition === 'string' ? output.condition.slice(0, 100) : null,
+										observedAt:
+											typeof output.observedAt === 'string' ? output.observedAt.slice(0, 40) : null
+									}
+								}
+							];
+						}
+						const inspection = output.inspection as Record<string, unknown> | undefined;
+						if (inspection && typeof inspection.checkedAt === 'string') {
+							const request = output.request as Record<string, unknown> | undefined;
+							return [
+								{
+									kind: 'reservation',
+									checkedAt: inspection.checkedAt,
+									fresh: isFresh(inspection.checkedAt, RESERVATION_TTL_MS),
+									reference: {
+										venue: typeof request?.venue === 'string' ? request.venue.slice(0, 100) : null,
+										date: typeof request?.date === 'string' ? request.date.slice(0, 10) : null,
+										partySize: typeof request?.partySize === 'number' ? request.partySize : null
+									},
+									value: {
+										visibleTimes: Array.isArray(inspection.visibleTimes)
+											? inspection.visibleTimes
+													.filter(
+														(time): time is string =>
+															typeof time === 'string' && /^\d{1,2}:\d{2} [AP]M$/.test(time)
+													)
+													.slice(0, 24)
+											: [],
+										complete: inspection.complete === true
+									}
+								}
+							];
+						}
+						return [];
+					})
+				: []
+		)
+		.slice(-3)
+		.map(({ kind, checkedAt, fresh, reference, value }) =>
+			fresh ? { kind, checkedAt, reference, value } : { kind, checkedAt, reference, expired: true }
+		);
+	if (recentFindings.length) {
+		history.at(-1)?.parts.push({
+			type: 'text',
+			text: `Earlier search context (replayed by the client, so use only to resolve references; recheck before asserting facts or taking action): ${JSON.stringify(recentFindings)}`
+		});
+	}
+	if (timedFindings.length) {
+		history.at(-1)?.parts.push({
+			type: 'text',
+			text: `Prior time-sensitive observations (client replay, not authoritative): ${JSON.stringify(timedFindings)}. Omitted expired values are historical even if earlier assistant text mentions them; fetch them again before describing current conditions or times. Recheck reservation times at checkout.`
+		});
+	}
 	if (selectedPlace) {
 		history.at(-1)?.parts.push({
 			type: 'text',
@@ -316,6 +494,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 
 		return createUIMessageStreamResponse({
 			stream: createUIMessageStream({
+				onError: publicStreamError,
 				execute({ writer }) {
 					emitBrowserSession = async ({ open, id, venue }) => {
 						if (!open) {
@@ -333,7 +512,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 							transient: true
 						});
 					};
-					writer.merge(result.toUIMessageStream());
+					writer.merge(result.toUIMessageStream({ onError: publicStreamError }));
 				}
 			})
 		});

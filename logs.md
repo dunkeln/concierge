@@ -15,6 +15,36 @@ Record a new entry only when a failure or limitation is observed and useful to r
 
 ## Entries
 
+### 2026-09-27 — Prior search results vanished on the next chat turn
+
+- Evidence: After finding Amoura in South San Francisco, later questions lost the restaurant's listing context; the chat route replayed assistant prose but discarded place and reservation search outputs.
+- Cause: The next model request rebuilt history from text and follow-up questions only. A place selection existed only when the user clicked a map pin.
+- Change: Replay a bounded summary of recent place or reservation-page results as reference context. Carry weather and inspected times only while their check times are fresh; retain location or venue identity when they expire. Remove expired reservation choices from the calendar and offer a new check.
+- Verification: Local two-turn chat listed Amoura, then identified the same South San Francisco listing and Mediterranean category on the follow-up. Freshness boundary checks, the existing reservation browser test, and a browser check that hides an expired time and shows “Check again” passed; `bun run check` passed.
+- Remaining limit: This context lasts only within the open chat and is not server-authenticated evidence. It does not preserve a thread across reloads or prove live availability; checkout rechecks the provider.
+
+### 2026-09-27 — South San Francisco rejected despite a valid Geoapify result
+
+- Evidence: Local chat said it could not resolve South San Francisco, California. Geoapify returned that city and listed Amoura among its restaurants.
+- Cause: The area matcher checked the full state name against a formatted address containing only `CA`.
+- Change: Match a requested context against Geoapify's structured state, state code, or country as well as its formatted address.
+- Verification: Local chat resolved South San Francisco, showed Amoura, identified its Mediterranean category, and answered a follow-up current-weather request. `bun run check` passed.
+- Remaining limit: Place categories do not verify a restaurant menu or reservation availability.
+
+### 2026-09-27 — Calendar selection snapped back
+
+- Evidence: In local chat, choosing September 29 briefly opened its day view, then returned to the initial date/view.
+- Cause: The shared calendar's prop-sync effect overwrote its own interactive date and view state.
+- Change: Initialize local state from props once; remove the reset effect.
+- Verification: Local follow-up kept September 29 selected and “Use date” sent `2026-09-29`; the time view accepted 11:30 and sent `11:30 AM on 2026-09-27`. `bun run check` and the existing reservation E2E passed.
+
+### 2026-09-27 — Downtown Pittsburgh failed area resolution
+
+- Evidence: A local reservation chat could not resolve `Downtown Pittsburgh, Pittsburgh`. Geoapify returned amenities for that wording but returned a Downtown suburb boundary for `Downtown, Pittsburgh`.
+- Cause: The resolver required an exact neighborhood name and repeated the city in the provider query.
+- Change: Collapse a repeated city suffix and accept a neighborhood plus city match.
+- Verification: A local `places.search` chat resolved Downtown, Pittsburgh and displayed its mapped restaurant listings; this does not verify reservation times.
+
 ### 2026-09-27 — Bigham Tavern search stopped before availability inspection
 
 - Evidence: In the local three-turn chat, the agent listed Mount Washington restaurants, found a Bigham Tavern reservation page, then could not verify a table for two right now. The matching Sentry trace shows two `reservations.find` calls and Browserbase search requests, but no `sevenrooms.inspect` span or error. A fresh SevenRooms search returned no exact Bigham Tavern match.
