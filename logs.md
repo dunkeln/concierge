@@ -23,6 +23,14 @@ Record a new entry only when a failure or limitation is observed and useful to r
 - Verification: Compared the live chat, the scoped Sentry trace, the adapter branch, and a fresh SevenRooms search. Browserbase search worked; no browser session was launched for this venue.
 - Remaining limit: The prompt can request a search, but it cannot verify availability on a provider the current adapter does not inspect. Prior tool results are also removed from model history on the next turn, causing the agent to search again instead of retaining the candidate link.
 
+### 2026-09-27 — Bigham Tavern uses Toast, which blocks the current browser session
+
+- Evidence: Bigham Tavern's official reservation page links its Mount Washington location to Toast Tables. The public Toast guest page displayed date/party filters and reserve buttons in a normal browser, but a direct Browserbase/Stagehand visit reached Toast's security verification page instead of inventory.
+- Cause: SevenRooms-only inspection cannot cover this venue, and the current Browserbase session cannot inspect Toast. Geoapify place data has no booking inventory.
+- Change: Investigation only; no runtime change.
+- Verification: Checked the official link, guest page, and one Browserbase visit for the same venue and date. No booking action was taken.
+- Remaining limit: Area discovery can surface this venue and its official booking link, but the agent cannot truthfully show verified Toast times until an access path for this provider works.
+
 ### 2026-09-27 — Geoapify returned two West Village area candidates
 
 - Evidence: A live geocode for `West Village, New York City` returned both a broad Manhattan result labeled as West Village and a West Village boundary; the first match displayed `Manhattan, New York`.
