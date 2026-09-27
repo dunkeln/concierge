@@ -15,6 +15,14 @@ Record a new entry only when a failure or limitation is observed and useful to r
 
 ## Entries
 
+### 2026-09-27 — Chat showed Markdown images as alt text
+
+- Evidence: Assistant messages converted `![alt](url)` into text instead of displaying an image.
+- Cause: A custom `markdown-it` image renderer escaped the alt text and discarded the image.
+- Change: Removed the override so `markdown-it` renders images normally.
+- Verification: Rendered Markdown contains an image element for a valid HTTPS URL; raw HTML remains escaped and unsafe URL schemes are not rendered as images. `bun run check` passed.
+- Remaining limit: Remote image URLs supplied by the model are loaded by the viewer's browser.
+
 ### 2026-09-27 — Local chat message failed after reservation follow-up
 
 - Evidence: The local chat showed “That message didn't go through” after the user supplied a party size and Tuesday preference. The matching Sentry chat trace contains a SevenRooms inspection warning at `verify_filters`.
