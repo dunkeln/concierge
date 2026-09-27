@@ -38,6 +38,86 @@
 		...scenarios.toReversed().filter(({ atmosphere }) => !data.atmospheres.includes(atmosphere))
 	]);
 	let messageField = $state<HTMLTextAreaElement>();
+	type LinkPreview = {
+		href: string;
+		domain: string;
+		label: string;
+		x: number;
+		y: number;
+		above: boolean;
+		title: string | null;
+		description: string | null;
+		image: string | null;
+	};
+	let linkPreview = $state<LinkPreview | null>(null);
+	const previewCache = new Map<string, Pick<LinkPreview, 'title' | 'description' | 'image'>>();
+	let previewTimer: ReturnType<typeof setTimeout> | undefined;
+	let previewRun = 0;
+	let previewLink: HTMLAnchorElement | null = null;
+
+	function hideLinkPreview() {
+		clearTimeout(previewTimer);
+		previewLink?.removeAttribute('aria-describedby');
+		previewLink = null;
+		previewRun++;
+		linkPreview = null;
+	}
+
+	function showLinkPreview(event: PointerEvent | FocusEvent) {
+		const link = event.target instanceof Element ? event.target.closest('a[href]') : null;
+		if (!(link instanceof HTMLAnchorElement) || linkPreview?.href === link.href) return;
+		let url: URL;
+		try {
+			url = new URL(link.href);
+		} catch {
+			return;
+		}
+		if (url.protocol !== 'https:' && url.protocol !== 'http:') return;
+		hideLinkPreview();
+		previewLink = link;
+		link.setAttribute('aria-describedby', 'assistant-link-preview');
+		const run = previewRun;
+		const rect = link.getBoundingClientRect();
+		previewTimer = setTimeout(
+			async () => {
+				linkPreview = {
+					href: link.href,
+					domain: url.hostname,
+					label: link.textContent?.trim() || url.hostname,
+					x: Math.max(12, Math.min(rect.left, window.innerWidth - 332)),
+					y: rect.bottom + 220 > window.innerHeight ? rect.top - 8 : rect.bottom + 8,
+					above: rect.bottom + 220 > window.innerHeight,
+					title: null,
+					description: null,
+					image: null
+				};
+				if (url.protocol !== 'https:' || url.search || url.hash || url.username || url.password)
+					return;
+				let details = previewCache.get(url.href);
+				if (!details) {
+					try {
+						const response = await fetch(`/api/link-preview?url=${encodeURIComponent(url.href)}`);
+						if (!response.ok) return;
+						details = await response.json();
+						previewCache.set(url.href, details!);
+					} catch {
+						return;
+					}
+				}
+				if (run === previewRun && linkPreview?.href === link.href && details) {
+					linkPreview = { ...linkPreview, ...details };
+				}
+			},
+			event.type === 'focusin' ? 0 : 180
+		);
+	}
+
+	function leaveLinkPreview(event: PointerEvent | FocusEvent) {
+		const link = event.target instanceof Element ? event.target.closest('a[href]') : null;
+		if (!link || (event.relatedTarget instanceof Node && link.contains(event.relatedTarget)))
+			return;
+		hideLinkPreview();
+	}
 	let selectedPlace = $state<{ id: string; name: string } | null>(null);
 	let selectedDate = $state<string | null>(null);
 	let selectedSlot = $state<{
@@ -203,6 +283,7 @@
 		<div
 			class="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto overscroll-contain py-10"
 			aria-live="polite"
+			onscroll={hideLinkPreview}
 		>
 			{#if passportOpen}
 				<PassportLedger visits={data.visits} atmospheres={data.atmospheres} error={form?.message} />
@@ -215,6 +296,10 @@
 						<Message.Content>
 							<Bubble.Root variant={message.role === 'user' ? 'secondary' : 'ghost'}>
 								<Bubble.Content
+									onpointerover={message.role === 'assistant' ? showLinkPreview : undefined}
+									onpointerout={message.role === 'assistant' ? leaveLinkPreview : undefined}
+									onfocusin={message.role === 'assistant' ? showLinkPreview : undefined}
+									onfocusout={message.role === 'assistant' ? leaveLinkPreview : undefined}
 									class={message.role === 'assistant'
 										? 'prose prose-sm max-w-none prose-invert prose-headings:font-medium prose-headings:text-inherit prose-p:my-2 prose-p:leading-relaxed prose-a:text-inherit prose-a:underline-offset-4 prose-strong:text-inherit prose-code:text-inherit prose-pre:overflow-x-auto prose-pre:rounded-xl prose-pre:bg-secondary'
 										: 'whitespace-pre-wrap'}
@@ -363,6 +448,34 @@
 				{/if}
 			{/if}
 		</div>
+		{#if linkPreview}
+			<div
+				id="assistant-link-preview"
+				role="tooltip"
+				class="pointer-events-none fixed z-50 w-80 max-w-[calc(100vw-1.5rem)] overflow-hidden rounded-xl border border-primary-foreground/15 bg-popover text-popover-foreground shadow-xl"
+				style={`left: ${linkPreview.x}px; top: ${linkPreview.y}px; transform: ${linkPreview.above ? 'translateY(-100%)' : 'none'}`}
+			>
+				{#if linkPreview.image}
+					<img
+						src={linkPreview.image}
+						alt=""
+						class="aspect-[2/1] w-full object-cover"
+						onerror={() => {
+							if (linkPreview) linkPreview.image = null;
+						}}
+					/>
+				{/if}
+				<div class="space-y-1 p-3">
+					<p class="truncate text-xs text-popover-foreground/60">{linkPreview.domain}</p>
+					<p class="line-clamp-2 text-sm font-medium">{linkPreview.title || linkPreview.label}</p>
+					{#if linkPreview.description}
+						<p class="line-clamp-3 text-xs leading-relaxed text-popover-foreground/70">
+							{linkPreview.description}
+						</p>
+					{/if}
+				</div>
+			</div>
+		{/if}
 
 		{#if !passportOpen}
 			{#if !data.chatConfigured}
