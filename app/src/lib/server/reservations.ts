@@ -48,7 +48,8 @@ const readCards = (page: Page) =>
 
 export async function findReservationPages(
 	input: ReservationQuery,
-	keys: { browserbase?: string }
+	keys: { browserbase?: string },
+	onSession?: (event: { state: 'open' | 'closed'; id: string; venue: string }) => Promise<void>
 ) {
 	const restaurantInput = typeof input.restaurant === 'string' ? input.restaurant.trim() : '';
 	const area = typeof input.area === 'string' ? input.area.trim() : '';
@@ -161,10 +162,16 @@ export async function findReservationPages(
 			return result;
 		const inspectSpan = Sentry.startInactiveSpan({ name: 'sevenrooms.inspect', op: 'browser' });
 		let inspectionStage = 'launch';
+		let sessionId: string | undefined;
 
 		try {
 			const browser = await browserbase.launch({ apiKey: browserbaseKey });
+			sessionId = browser.sessionId;
 			try {
+				if (sessionId)
+					await onSession?.({ state: 'open', id: sessionId, venue: restaurant }).catch(
+						() => undefined
+					);
 				inspectionStage = 'attach';
 				const stagehand = await Stagehand.create({ browser });
 				try {
@@ -248,6 +255,10 @@ export async function findReservationPages(
 			result.availability =
 				'Reservation page inspection was unavailable; these are candidate links only.';
 		} finally {
+			if (sessionId)
+				await onSession?.({ state: 'closed', id: sessionId, venue: restaurant }).catch(
+					() => undefined
+				);
 			inspectSpan.end();
 		}
 		return result;

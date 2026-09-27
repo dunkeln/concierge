@@ -17,7 +17,7 @@ export const GET: RequestHandler = async ({ locals, url }) => {
 			error(403, 'Checkout view is unavailable.');
 		const { debuggerFullscreenUrl } = await new Browserbase({
 			apiKey: env.BROWSERBASE_API_KEY
-		}).sessions.debug(payload.sid);
+		}).sessions.debug(payload.sid, payload.scope === 'preview' ? { expiresIn: 120 } : undefined);
 		const destination = new URL(debuggerFullscreenUrl);
 		if (destination.protocol !== 'https:' || !/(^|\.)browserbase\.com$/.test(destination.hostname))
 			throw new Error('Invalid live view URL');

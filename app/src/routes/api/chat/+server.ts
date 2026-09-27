@@ -5,6 +5,8 @@ import { SignJWT } from 'jose';
 import * as Sentry from '@sentry/sveltekit';
 import {
 	convertToModelMessages,
+	createUIMessageStream,
+	createUIMessageStreamResponse,
 	jsonSchema,
 	safeValidateUIMessages,
 	stepCountIs,
@@ -175,6 +177,8 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 	}
 	const modelMessages = await convertToModelMessages(history);
 	const discovered = new Set<string>();
+	let emitBrowserSession:
+		((event: { state: 'open' | 'closed'; id: string; venue: string }) => Promise<void>) | undefined;
 	return Sentry.startSpanManual({ name: 'chat.intake', op: 'ai.stream' }, async (span, finish) => {
 		const modelSpans = new Map<string, ReturnType<typeof Sentry.startInactiveSpan>>();
 		const endTrace = () => {
@@ -240,7 +244,10 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 							return { ...observation, viewPath: `/api/reservations/view?ticket=${ticket}` };
 						}
 						return Sentry.startSpan({ name: `capability.${name}`, op: 'agent.tool' }, () =>
-							capabilities[name].run(input)
+							capabilities[name].run(
+								input,
+								name === 'reservations.find' ? emitBrowserSession : undefined
+							)
 						);
 					}
 				})
@@ -280,6 +287,28 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			}
 		});
 
-		return result.toUIMessageStreamResponse();
+		return createUIMessageStreamResponse({
+			stream: createUIMessageStream({
+				execute({ writer }) {
+					emitBrowserSession = async ({ state, id, venue }) => {
+						if (state === 'closed') {
+							writer.write({ type: 'data-browser', data: { state, id }, transient: true });
+							return;
+						}
+						const ticket = await new SignJWT({ sid: id, scope: 'preview' })
+							.setProtectedHeader({ alg: 'HS256' })
+							.setSubject(userId)
+							.setExpirationTime(Math.floor(Date.now() / 1_000) + 120)
+							.sign(new TextEncoder().encode(env.BETTER_AUTH_SECRET));
+						writer.write({
+							type: 'data-browser',
+							data: { state, id, venue, viewPath: `/api/reservations/view?ticket=${ticket}` },
+							transient: true
+						});
+					};
+					writer.merge(result.toUIMessageStream());
+				}
+			})
+		});
 	});
 };

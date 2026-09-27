@@ -7,6 +7,7 @@
 	import * as Message from '$lib/components/ui/message';
 	import MapWidget from '$lib/MapWidget.svelte';
 	import ReservationCalendar from '$lib/ReservationCalendar.svelte';
+	import BrowserPreviewStack from '$lib/BrowserPreviewStack.svelte';
 	import PassportLedger from '$lib/PassportLedger.svelte';
 	import { renderMarkdown } from '$lib/markdown';
 	import { scenarios } from '$lib/onboarding';
@@ -128,7 +129,38 @@
 		experience?: string;
 		sourceUrl?: string;
 	} | null>(null);
+	type BrowserSession = {
+		id: string;
+		venue: string;
+		viewPath: string;
+		state: 'open' | 'closed';
+	};
+	let browserSessions = $state<BrowserSession[]>([]);
 	const chat = new Chat({
+		onData: (part) => {
+			if (part.type !== 'data-browser') return;
+			if (!part.data || typeof part.data !== 'object') return;
+			const event = part.data as Partial<BrowserSession>;
+			if (typeof event.id !== 'string' || !event.id || event.id.length > 200) return;
+			if (event.state === 'closed') {
+				browserSessions = browserSessions.map((session) =>
+					session.id === event.id ? { ...session, state: 'closed', viewPath: '' } : session
+				);
+				return;
+			}
+			if (
+				event.state !== 'open' ||
+				typeof event.venue !== 'string' ||
+				event.venue.length > 100 ||
+				typeof event.viewPath !== 'string' ||
+				!/^\/api\/reservations\/view\?ticket=[\w.-]+$/.test(event.viewPath)
+			)
+				return;
+			browserSessions = [
+				...browserSessions.filter((session) => session.id !== event.id),
+				event as BrowserSession
+			].slice(-5);
+		},
 		transport: new DefaultChatTransport({
 			prepareSendMessagesRequest: ({ messages }) => ({
 				body: {
@@ -156,6 +188,7 @@
 		selectedPlace = null;
 		selectedDate = null;
 		selectedSlot = null;
+		browserSessions = [];
 	}
 
 	type Place = { id: string; name: string; lat: number; lon: number };
@@ -458,6 +491,9 @@
 						{/if}
 					</div>
 				{/each}
+				{#if browserSessions.length}
+					<BrowserPreviewStack sessions={browserSessions} />
+				{/if}
 				{#if chat.status === 'submitted'}
 					<p class="text-sm text-primary-foreground/55" role="status">Thinking…</p>
 				{/if}

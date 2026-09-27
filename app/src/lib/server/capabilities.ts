@@ -5,7 +5,14 @@ import { findReservationPages, prepareReservation } from './reservations';
 type Capability = {
 	description: string;
 	input: Record<string, string>;
-	run: (input: Record<string, unknown>) => unknown | Promise<unknown>;
+	run: (
+		input: Record<string, unknown>,
+		onBrowserSession?: (event: {
+			state: 'open' | 'closed';
+			id: string;
+			venue: string;
+		}) => Promise<void>
+	) => unknown | Promise<unknown>;
 };
 
 type GeoapifyArea = {
@@ -163,9 +170,9 @@ export const capabilities: Record<string, Capability> = {
 			date: 'Optional requested date as YYYY-MM-DD',
 			partySize: 'Optional number of guests, 1–12'
 		},
-		run: async (input) => {
+		run: async (input, onBrowserSession) => {
 			const [reservation, discovery] = await Promise.all([
-				findReservationPages(input, { browserbase: env.BROWSERBASE_API_KEY }),
+				findReservationPages(input, { browserbase: env.BROWSERBASE_API_KEY }, onBrowserSession),
 				input.area ? geoapifySearch(input.area, input.kind) : null
 			]);
 			return discovery && 'places' in discovery
