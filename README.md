@@ -34,9 +34,9 @@ In another terminal, run `bun run test:auth`, sign in with your own local accoun
 
 Run `bun run eval:local` in `app/` to score the frozen, redacted Sentry observations in `app/tests/sentry-snapshots.json` without calling the agent, model, or provider. Run `bun run eval:braintrust` to record those same observed scores in the dedicated Concierge Braintrust project. Braintrust code lives in `app/tests/`, outside the app runtime. A score is null when the capture lacks the provider evidence needed to judge that claim.
 
-For a human-triggered development review, pick a `POST /api/chat` trace in the Concierge Sentry project. Read the `chat.intake`, `gen_ai.generate_content`, and `gen_ai.execute_tool` spans, plus the AI conversation transcript. Copy only the relevant observed request, calls, outcome, and answer into `app/tests/sentry-snapshots.json`, with its trace URL and without user details or secrets. Set `providerOutcome` only from independent provider evidence; use `null` when it is absent. Then score that fixed observation. Sentry remains the evidence source; no automatic trace forwarding is configured.
+For a human-triggered development review, pick a `POST /api/chat` trace in the Concierge Sentry project. Read the `chat.intake`, `gen_ai.generate_content`, and `gen_ai.execute_tool` spans, plus the AI conversation transcript. Append only the relevant observed request, calls, outcome, and answer to `app/tests/sentry-snapshots.json`, with its trace URL and without user details or secrets. Use empty `expected` for a turn without a selected slot. Set `providerOutcome` only from independent provider evidence; use `null` when it is absent. Then score those fixed observations. Sentry remains the evidence source; no automatic trace forwarding is configured.
 
-`app/tests/snapshots.md` records qualitative journeys. The observed-snapshot scores cover only the claims supported by each capture; they are not comparable to the earlier synthetic replay experiment.
+`app/tests/snapshots.md` records qualitative journeys. Compare scores only across observed captures with the same applicable checks; an inapplicable check remains unscored.
 
 ## Scope and cuts
 

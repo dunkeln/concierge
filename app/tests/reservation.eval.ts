@@ -9,7 +9,7 @@ type Observation = {
 };
 type Snapshot = {
 	input: { request: string; observation: Observation };
-	expected: { venue: string; date: string; partySize: number; time: string };
+	expected: { venue?: string; date?: string; partySize?: number; time?: string };
 	metadata: { source: string; capturedAt: string };
 };
 
@@ -28,9 +28,11 @@ Eval('Concierge', {
 		function searchedBeforeExecution({ output }) {
 			const firstSearch = output.calls.findIndex((call) => call.tool === 'search');
 			const firstExecute = output.calls.findIndex((call) => call.tool === 'execute');
+			if (firstExecute < 0) return null;
 			return Number(firstSearch >= 0 && firstExecute > firstSearch);
 		},
 		function selectedSlotArguments({ output, expected }) {
+			if (!expected.venue || !expected.date || !expected.partySize || !expected.time) return null;
 			return Number(
 				output.calls.some(
 					(call) =>
