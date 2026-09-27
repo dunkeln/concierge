@@ -15,6 +15,22 @@ Record a new entry only when a failure or limitation is observed and useful to r
 
 ## Entries
 
+### 2026-09-27 — Geoapify returned two West Village area candidates
+
+- Evidence: A live geocode for `West Village, New York City` returned both a broad Manhattan result labeled as West Village and a West Village boundary; the first match displayed `Manhattan, New York`.
+- Cause: The geocoder returns multiple matching features with different boundaries, and the first matching hierarchy is not always the intended area.
+- Change: Prefer the candidate whose formatted name begins with the requested area, then search Geoapify Places within its `place_id` boundary. Replace Nominatim, Mapbox MCP, and Mapbox tiles with Geoapify search and map tiles.
+- Verification: Live `places.search` returned 8 Mount Washington restaurants, 25 West Village restaurants, and 25 West Village cafés, each labeled with the intended area. The Geoapify dark map style returned HTTP 200; `bun run check` passed.
+- Remaining limit: Venue results depend on Geoapify/OSM coverage and are capped at 25. A listing is not reservation availability; a full multi-area agent turn remains unverified.
+
+### 2026-09-27 — MapLibre markers appeared before the new basemap
+
+- Evidence: The local chat initially displayed Geoapify result pins over a black map, and the browser reported that the MapLibre worker failed to load.
+- Cause: MapLibre v6 requires an explicit bundled worker URL under Vite.
+- Change: Import its worker with Vite's `?worker&url` and set that URL before constructing the map.
+- Verification: After a reload, the local agent returned Mount Washington listings, the browser rendered Geoapify's dark street tiles beneath the pins, and `bun run check` passed.
+- Remaining limit: One local browser and one area were visually checked; the map key is browser-visible and should have provider-side usage limits before deployment.
+
 ### 2026-09-27 — Chat showed Markdown images as alt text
 
 - Evidence: Assistant messages converted `![alt](url)` into text instead of displaying an image.

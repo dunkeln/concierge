@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import 'mapbox-gl/dist/mapbox-gl.css';
+	import 'maplibre-gl/dist/maplibre-gl.css';
+	import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 
 	type Place = { id: string; name: string; lat: number; lon: number };
 	let {
@@ -19,19 +20,19 @@
 
 	onMount(() => {
 		let disposed = false;
-		let map: import('mapbox-gl').Map | undefined;
-		void import('mapbox-gl').then(({ default: mapboxgl }) => {
-			if (disposed) return;
-			map = new mapboxgl.Map({
+		let map: import('maplibre-gl').Map | undefined;
+	void import('maplibre-gl').then((maplibregl) => {
+		if (disposed) return;
+		maplibregl.setWorkerUrl(workerUrl);
+			const createdMap = new maplibregl.Map({
 				container,
-				accessToken: token,
-				style: 'mapbox://styles/mapbox/dark-v11',
-				center: [places[0].lon, places[0].lat],
-				zoom: 13,
-				attributionControl: true
+			style: `https://maps.geoapify.com/v1/styles/dark-matter/style.json?apiKey=${encodeURIComponent(token)}`,
+			center: [places[0].lon, places[0].lat],
+			zoom: 13
 			});
-			map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'top-right');
-			const bounds = new mapboxgl.LngLatBounds();
+			map = createdMap;
+			createdMap.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
+			const bounds = new maplibregl.LngLatBounds();
 			for (const place of places) {
 				bounds.extend([place.lon, place.lat]);
 				const element = document.createElement('button');
@@ -40,10 +41,11 @@
 				element.setAttribute('aria-label', `Select ${place.name}`);
 				element.title = place.name;
 				element.addEventListener('click', () => onSelect(place));
-				new mapboxgl.Marker({ element }).setLngLat([place.lon, place.lat]).addTo(map);
+				new maplibregl.Marker({ element }).setLngLat([place.lon, place.lat]).addTo(createdMap);
 				markers.push({ id: place.id, element });
 			}
-			if (places.length > 1) map.fitBounds(bounds, { padding: 42, maxZoom: 15, duration: 0 });
+			if (places.length > 1)
+				createdMap.fitBounds(bounds, { padding: 42, maxZoom: 15, duration: 0 });
 			for (const marker of markers)
 				marker.element.dataset.selected = String(marker.id === selectedId);
 		});

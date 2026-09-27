@@ -63,7 +63,7 @@
 		"bits-ui": "^2.19.3",
 		"clsx": "^2.1.1",
 		"jose": "^6.2.12",
-		"mapbox-gl": "^3.31.0",
+		"maplibre-gl": "^6.11.2",
 		"markdown-it": "^15.0.2",
 		"openai": "^7.23.0",
 		"tailwind-merge": "^3.7.0",

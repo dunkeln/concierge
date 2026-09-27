@@ -248,7 +248,7 @@
 		});
 	}
 
-	function hasMapboxResult(message: (typeof chat.messages)[number]) {
+	function hasPlaceResult(message: (typeof chat.messages)[number]) {
 		return message.parts.some(
 			(part) =>
 				part.type === 'tool-execute' &&
@@ -328,11 +328,11 @@
 							{#each message.role === 'assistant' ? searches : [] as search}
 								{@const places = search.places}
 								<p class="px-3 text-xs text-primary-foreground/70">{search.area}</p>
-								{#if data.mapboxToken}
+								{#if data.geoapifyMapKey}
 									<div class="mx-3 w-full max-w-xl">
 										<MapWidget
 											{places}
-											token={data.mapboxToken}
+											token={data.geoapifyMapKey}
 											selectedId={selectedPlace?.id ?? null}
 											onSelect={(place) =>
 												(selectedPlace = { id: place.id, name: place.name, area: search.area })}
@@ -404,7 +404,7 @@
 									>
 								</div>
 							{/if}
-							{#if message.role === 'assistant' && hasMapboxResult(message)}
+							{#if message.role === 'assistant' && hasPlaceResult(message)}
 								<a
 									href="https://www.openstreetmap.org/copyright"
 									class="px-3 text-xs text-primary-foreground/70 underline-offset-2 hover:underline"
@@ -412,10 +412,10 @@
 									rel="noopener noreferrer">Area data © OpenStreetMap contributors</a
 								>
 								<a
-									href="https://www.mapbox.com/about/maps/"
+									href="https://www.geoapify.com/"
 									class="px-3 text-xs text-primary-foreground/70 underline-offset-2 hover:underline"
 									target="_blank"
-									rel="noopener noreferrer">© Mapbox and its suppliers · Terms</a
+									rel="noopener noreferrer">Places and map by Geoapify</a
 								>
 							{/if}
 						</Message.Content>

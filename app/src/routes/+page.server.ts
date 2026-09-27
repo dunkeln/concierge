@@ -32,7 +32,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 			: [];
 	return {
 		chatConfigured: Boolean(env.OPENROUTER_API_KEY),
-		mapboxToken: env.MAPBOX_ACCESS_TOKEN?.startsWith('pk.') ? env.MAPBOX_ACCESS_TOKEN : null,
+		geoapifyMapKey: env.GEOAPIFY_API_KEY || null,
 		atmospheres: profile?.atmospheres ?? [],
 		googleEnabled,
 		calendarConnected: google.some(({ scope }) => hasCalendarScopes(scope)),

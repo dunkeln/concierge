@@ -8,101 +8,80 @@ type Capability = {
 	run: (input: Record<string, unknown>) => unknown | Promise<unknown>;
 };
 
-type MapboxFeature = {
+type GeoapifyArea = {
+	name?: string;
+	suburb?: string;
+	district?: string;
+	city?: string;
+	formatted?: string;
+	place_id?: string;
+	lat?: number;
+	lon?: number;
+	result_type?: string;
+};
+
+type GeoapifyPlace = {
 	geometry?: { coordinates?: number[] };
-	properties?: {
-		mapbox_id?: string;
-		name?: string;
-		full_address?: string;
-		poi_category?: string[];
-	};
+	properties?: { place_id?: string; name?: string; formatted?: string; categories?: string[] };
 };
 
-type OsmArea = {
-	display_name?: string;
-	lat?: string;
-	lon?: string;
-	boundingbox?: string[];
-};
+const areaCache = new Map<string, GeoapifyArea>();
 
-const areaCache = new Map<string, OsmArea>();
-// ponytail: This limiter is per process; use a hosted geocoder or shared limiter before deploying at scale.
-let nextNominatimRequestAt = 0;
-let nominatimQueue: Promise<unknown> = Promise.resolve();
+async function geoapifyJson(url: URL, span: string) {
+	url.searchParams.set('apiKey', env.GEOAPIFY_API_KEY);
+	const response = await Sentry.startSpan({ name: span, op: 'http.client' }, () =>
+		fetch(url, { signal: AbortSignal.timeout(12_000) })
+	);
+	if (!response.ok) throw new Error(`Geoapify ${response.status}`);
+	return response.json();
+}
+
+function matchesArea(query: string, area: GeoapifyArea) {
+	const normalize = (value: string) =>
+		value
+			.toLowerCase()
+			.replace(/\bmt\b\.?/g, 'mount')
+			.replace(/\bcity\b/g, '')
+			.replace(/[^a-z0-9]+/g, ' ')
+			.trim();
+	const [place, context] = query.split(',');
+	return (
+		[area.name, area.suburb, area.district, area.city, area.formatted?.split(',')[0]].some(
+			(value) => value && normalize(value) === normalize(place)
+		) &&
+		(!context || normalize(area.formatted ?? '').includes(normalize(context)))
+	);
+}
 
 async function resolveArea(name: string) {
 	const key = name.toLocaleLowerCase();
 	const cached = areaCache.get(key);
 	if (cached) return cached;
-	const request = nominatimQueue.then(async () => {
-		const queuedCached = areaCache.get(key);
-		if (queuedCached) return queuedCached;
-		const delay = Math.max(0, nextNominatimRequestAt - Date.now());
-		if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
-		nextNominatimRequestAt = Date.now() + 1_100;
-		const url = new URL(env.NOMINATIM_SEARCH_URL || 'https://nominatim.openstreetmap.org/search');
-		url.search = new URLSearchParams({ q: name, format: 'jsonv2', limit: '1' }).toString();
-		const response = await Sentry.startSpan({ name: 'osm.resolve_area', op: 'http.client' }, () =>
-			fetch(url, {
-				headers: {
-					'User-Agent': 'ConciergePearl/0.1 (https://concierge-pearl.vercel.app)',
-					Referer: 'https://concierge-pearl.vercel.app/'
-				},
-				signal: AbortSignal.timeout(8_000)
-			})
-		);
-		if (!response.ok) throw new Error('Area lookup failed.');
-		const results = (await response.json()) as OsmArea[];
-		const area = results[0];
-		if (area) {
-			if (areaCache.size >= 100) areaCache.delete(areaCache.keys().next().value!);
-			areaCache.set(key, area);
-		}
-		return area;
-	});
-	nominatimQueue = request.then(
-		() => undefined,
-		() => undefined
+	const url = new URL('https://api.geoapify.com/v1/geocode/search');
+	url.searchParams.set('text', name);
+	url.searchParams.set('format', 'json');
+	url.searchParams.set('limit', '5');
+	const data = (await geoapifyJson(url, 'geoapify.geocode')) as { results?: GeoapifyArea[] };
+	const matches = data.results?.filter(
+		(result) =>
+			result.place_id &&
+			Number.isFinite(result.lat) &&
+			Number.isFinite(result.lon) &&
+			['suburb', 'district', 'city', 'locality'].includes(result.result_type ?? '') &&
+			matchesArea(name, result)
 	);
-	return request;
+	const requested = name.split(',')[0].toLowerCase();
+	const area =
+		matches?.find((result) => result.formatted?.toLowerCase().startsWith(`${requested},`)) ??
+		matches?.[0];
+	if (area) {
+		if (areaCache.size >= 100) areaCache.delete(areaCache.keys().next().value!);
+		areaCache.set(key, area);
+	}
+	return area;
 }
 
-async function mapboxCall(name: string, args: Record<string, unknown>) {
-	const response = await Sentry.startSpan({ name: `mapbox.${name}`, op: 'http.client' }, () =>
-		fetch('https://mcp.mapbox.com/mcp', {
-			method: 'POST',
-			headers: {
-				authorization: `Bearer ${env.MAPBOX_ACCESS_TOKEN}`,
-				accept: 'application/json, text/event-stream',
-				'content-type': 'application/json'
-			},
-			body: JSON.stringify({
-				jsonrpc: '2.0',
-				id: 1,
-				method: 'tools/call',
-				params: { name, arguments: args }
-			}),
-			signal: AbortSignal.timeout(12_000)
-		})
-	);
-	if (!response.ok) throw new Error('Mapbox request failed.');
-	const body = await response.text();
-	const data = response.headers.get('content-type')?.includes('text/event-stream')
-		? JSON.parse(
-				body
-					.split(/\r?\n/)
-					.find((line) => line.startsWith('data: '))
-					?.slice(6) ?? ''
-			)
-		: JSON.parse(body);
-	if (data.error || data.result?.isError) throw new Error('Mapbox search failed.');
-	const result = data.result?.structuredContent as
-		{ features?: MapboxFeature[]; attribution?: string } | undefined;
-	if (!Array.isArray(result?.features)) throw new Error('Invalid Mapbox response.');
-	return { features: result.features, attribution: result.attribution };
-}
-
-async function mapboxSearch(area: unknown, kind: unknown = 'restaurant') {
+async function geoapifySearch(area: unknown, kind: unknown = 'restaurant') {
 	if (typeof area !== 'string' || area.trim().length < 3 || area.length > 100) {
 		return { error: 'Provide a neighborhood or city name (up to 100 characters).' };
 	}
@@ -113,38 +92,25 @@ async function mapboxSearch(area: unknown, kind: unknown = 'restaurant') {
 	if (kind !== 'restaurant' && kind !== 'cafe') {
 		return { error: 'Choose restaurant or cafe.' };
 	}
-	if (!env.MAPBOX_ACCESS_TOKEN) return { error: 'Mapbox search is not configured.' };
+	if (!env.GEOAPIFY_API_KEY) return { error: 'Place search is not configured.' };
 
 	try {
 		const location = await resolveArea(name);
-		const latitude = Number(location?.lat);
-		const longitude = Number(location?.lon);
-		if (!location || !Number.isFinite(latitude) || !Number.isFinite(longitude)) {
-			return { error: 'Area not found.' };
-		}
-		const bounds = location.boundingbox?.map(Number);
-		const result = await mapboxCall('category_search_tool', {
-			category: kind === 'cafe' ? 'coffee' : 'restaurant',
-			limit: 25,
-			proximity: { longitude, latitude },
-			...(bounds?.length === 4 && bounds.every(Number.isFinite)
-				? {
-						bbox: {
-							minLongitude: bounds[2],
-							minLatitude: bounds[0],
-							maxLongitude: bounds[3],
-							maxLatitude: bounds[1]
-						}
-					}
-				: {})
-		});
+		if (!location?.place_id) return { error: 'Area not found or ambiguous. Include the city.' };
+		const url = new URL('https://api.geoapify.com/v2/places');
+		url.searchParams.set('categories', kind === 'cafe' ? 'catering.cafe' : 'catering.restaurant');
+		url.searchParams.set('filter', `place:${location.place_id}`);
+		url.searchParams.set('bias', `proximity:${location.lon},${location.lat}`);
+		url.searchParams.set('limit', '25');
+		const result = (await geoapifyJson(url, 'geoapify.places')) as { features?: GeoapifyPlace[] };
+		if (!Array.isArray(result.features)) throw new Error('Invalid place results.');
 		const places = result.features.flatMap((feature) => {
 			const coordinates = feature.geometry?.coordinates;
 			const {
-				mapbox_id: id,
+				place_id: id,
 				name: placeName,
-				full_address: address,
-				poi_category: categories
+				formatted: address,
+				categories
 			} = feature.properties ?? {};
 			if (
 				!id ||
@@ -160,10 +126,10 @@ async function mapboxSearch(area: unknown, kind: unknown = 'restaurant') {
 		});
 		Sentry.getActiveSpan()?.setAttribute('places.result_count', places.length);
 		return {
-			area: location.display_name ?? name,
+			area: location.formatted ?? name,
 			places,
-			attribution: result.attribution ?? '© Mapbox and its suppliers',
-			availability: 'Not provided by Mapbox'
+			attribution: '© OpenStreetMap contributors via Geoapify',
+			availability: 'Not provided by Geoapify'
 		};
 	} catch {
 		Sentry.getActiveSpan()?.setAttribute('outcome', 'place_search_error');
@@ -204,12 +170,12 @@ export const capabilities: Record<string, Capability> = {
 	},
 	'places.search': {
 		description:
-			'Find restaurants or cafés in a named neighborhood or city. OpenStreetMap resolves the area and Mapbox searches venues inside it. Call once for each distinct area; each result belongs only to its resolved area. Does not show reservation availability.',
+			'Find restaurants or cafés inside a named neighborhood or city using Geoapify. Call once for each distinct area; each result belongs only to its resolved area. Does not show reservation availability.',
 		input: {
 			area: 'Public neighborhood and city, such as West Village, New York City; no private addresses',
 			kind: 'restaurant or cafe; defaults to restaurant'
 		},
-		run: ({ area, kind }) => mapboxSearch(area, kind)
+		run: ({ area, kind }) => geoapifySearch(area, kind)
 	},
 	'clock.now': {
 		description: 'Get the current date and time in an IANA timezone.',
