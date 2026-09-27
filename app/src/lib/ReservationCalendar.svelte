@@ -7,6 +7,7 @@
 		date: string;
 		partySize: number;
 		times: string[];
+		timeGroups?: { requested: string[]; nearby: string[] };
 		experiences?: { name: string; times: string[] }[];
 		complete: boolean;
 		checkedAt: string | null;
@@ -52,13 +53,14 @@
 			.toSorted((a, b) => minutes(a) - minutes(b))
 			.flatMap((time) => {
 				const matching = inspection.experiences?.filter((item) => item.times.includes(time)) ?? [];
+				const label = inspection.timeGroups?.nearby.includes(time) ? `${time} · Nearby` : time;
 				return matching.length > 1
 					? matching.map((item) => ({
 							time,
 							experience: item.name,
-							label: `${time} · ${item.name}`
+							label: `${label} · ${item.name}`
 						}))
-					: [{ time, experience: matching[0]?.name, label: time }];
+					: [{ time, experience: matching[0]?.name, label }];
 			})
 	);
 </script>

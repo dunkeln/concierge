@@ -18,9 +18,10 @@ Record a new entry only when a failure or limitation is observed and useful to r
 ### 2026-09-27 — Ai Fiori inspection intermittently returned candidate links
 
 - Evidence: The same dated, two-person Ai Fiori live browser test reached verified times and checkout on one run, then returned a reservation link with “page inspection was unavailable” on the next. The failing run exposed no verified time buttons.
-- Hypothesis: The inspection branch failed after finding the SevenRooms page. The test output does not identify whether launch, navigation, filter verification, or extraction failed; no cause is established.
-- Change: Open. The opt-in live test retains the failed transcript and Playwright page snapshot for diagnosis.
-- Verification: The failing agent answer correctly said no times were confirmed. Mocked UI tests passed, and `bun run check` found no diagnostics.
+- Evidence from Sentry: The failed local `/api/chat` run reached `reservation.inspection_stage=verify_filters` and recorded a generic `Error`. The specific failing call or provider cause was not captured.
+- Hypothesis: A call during date/guest filter verification failed. The trace does not establish whether snapshot access, page state, or another operation caused it.
+- Change: Mark thrown inspection errors retryable for one agent retry, and record the failing operation and a bounded error code. The opt-in live test retains the failed transcript and Playwright page snapshot.
+- Verification: The failing agent answer correctly said no times were confirmed. `bun run check` passes after the change; the next live inspection has not yet exercised the new diagnostic or retry.
 - Regression guard: Run the live reservation test against a dated venue and inspect the `sevenrooms.inspect` stage when it fails.
 - Remaining limit: One success and one failure do not establish a failure rate. Do not present this path as reliably available until repeated runs and stage-level traces agree.
 
@@ -28,8 +29,8 @@ Record a new entry only when a failure or limitation is observed and useful to r
 
 - Evidence: A live Ai Fiori search for two on September 28 described dinner times, while its calendar offered 7:00 am BREAKFAST. Selecting that option and continuing did not reach checkout.
 - Cause: The browser inspection returns all visible times for the date and party. The calendar renders that set without the user's requested meal or time window.
-- Change: Added an opt-in live browser test for search, selection, checkout handoff, and authenticated live-view redirect. Kept the product behavior unchanged pending a scoped time-filter design.
-- Verification: The corrected test selected a 7–9 pm time and reached a Browserbase live-view redirect; no guest details or payment were submitted.
+- Change: Added an opt-in live browser test for search, selection, checkout handoff, and authenticated live-view redirect. A requested local time window now filters selectable provider times to that window plus 30 minutes on each side; nearby choices are labeled.
+- Verification: The local live Ai Fiori test for September 28, 7–9 pm found a verified dinner time and reached the authenticated Browserbase live-view redirect after selection. No guest details or payment were submitted. The test does not assert that every out-of-window button is absent.
 - Regression guard: [Ai Fiori snapshot](app/tests/snapshots.md) records the requested-window check. The live test currently verifies the dinner handoff, not exclusion of breakfast choices.
 - Remaining limit: A Browserbase redirect establishes the live handoff, but the test does not independently compare every displayed time with the provider page or prove a completed booking.
 

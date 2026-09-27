@@ -7,6 +7,13 @@ type ReservationQuery = {
 	kind?: unknown;
 	date?: unknown;
 	partySize?: unknown;
+	startTime?: unknown;
+	endTime?: unknown;
+};
+
+const minutes = (time: string) => {
+	const [, hour, minute, period] = /^(\d{1,2}):(\d{2}) ([AP]M)$/.exec(time) ?? [];
+	return hour ? ((Number(hour) % 12) + (period === 'PM' ? 12 : 0)) * 60 + Number(minute) : -1;
 };
 
 const readCards = (page: Page) =>
@@ -80,6 +87,24 @@ export async function findReservationPages(
 	) {
 		return { error: 'Party size must be 1–12.' };
 	}
+	const validClock = (value: unknown) =>
+		typeof value === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+	if (
+		(input.startTime === undefined) !== (input.endTime === undefined) ||
+		(input.startTime !== undefined &&
+			(!validClock(input.startTime) ||
+				!validClock(input.endTime) ||
+				(input.startTime as string) > (input.endTime as string)))
+	)
+		return { error: 'Provide startTime and endTime as local HH:mm, from earlier to later.' };
+	const window =
+		typeof input.startTime === 'string' && typeof input.endTime === 'string'
+			? {
+					startTime: input.startTime,
+					endTime: input.endTime,
+					wiggleMinutes: 30
+				}
+			: null;
 	if (!keys.browserbase) return { error: 'Reservation page search is not configured.' };
 	const browserbaseKey = keys.browserbase;
 
@@ -131,15 +156,28 @@ export async function findReservationPages(
 		const result: {
 			pages: typeof pages;
 			inspection?: unknown;
+			inspectionOutcome:
+				| 'unsupported_or_no_exact_venue'
+				| 'missing_date_or_party'
+				| 'filter_mismatch'
+				| 'retryable_failure'
+				| 'verified';
 			availability: string;
-			request: { venue: string; date: string | null; partySize: number | null };
+			request: {
+				venue: string;
+				date: string | null;
+				partySize: number | null;
+				timeWindow: typeof window;
+			};
 		} = {
 			pages,
+			inspectionOutcome: 'unsupported_or_no_exact_venue',
 			availability: 'Not checked for the requested date and party size.',
 			request: {
 				venue: restaurant || area,
 				date: typeof input.date === 'string' ? input.date : null,
-				partySize: typeof input.partySize === 'number' ? input.partySize : null
+				partySize: typeof input.partySize === 'number' ? input.partySize : null,
+				timeWindow: window
 			}
 		};
 		Sentry.getActiveSpan()?.setAttribute('reservation.page_count', pages.length);
@@ -158,10 +196,14 @@ export async function findReservationPages(
 					.toLowerCase() === venue
 			);
 		});
-		if (!sevenrooms || typeof input.date !== 'string' || typeof input.partySize !== 'number')
+		if (!sevenrooms) return result;
+		if (typeof input.date !== 'string' || typeof input.partySize !== 'number') {
+			result.inspectionOutcome = 'missing_date_or_party';
 			return result;
+		}
 		const inspectSpan = Sentry.startInactiveSpan({ name: 'sevenrooms.inspect', op: 'browser' });
 		let inspectionStage = 'launch';
+		let inspectionOperation = 'launch';
 		let sessionId: string | undefined;
 
 		try {
@@ -189,6 +231,7 @@ export async function findReservationPages(
 					inspectionStage = 'verify_filters';
 					let tree = '';
 					for (let attempt = 0; attempt < 8; attempt++) {
+						inspectionOperation = 'snapshot';
 						tree = (await page.snapshot()).formattedTree;
 						if (
 							tree.includes(`button: Date ${requestedDate}`) &&
@@ -201,6 +244,7 @@ export async function findReservationPages(
 					}
 					const selectedDate = /button: Date ([A-Za-z]{3} \d{1,2})/.exec(tree)?.[1] ?? null;
 					const selectedPartySize = Number(/button: Guests (\d+) Guests/.exec(tree)?.[1]) || null;
+					inspectionOperation = 'read_url';
 					const selectedUrlDate = new URL(await page.url()).searchParams.get('date');
 					const filtersMatch =
 						selectedDate === requestedDate &&
@@ -208,6 +252,15 @@ export async function findReservationPages(
 						selectedPartySize === input.partySize;
 					if (!filtersMatch) {
 						inspectSpan.setAttribute('outcome', 'filter_mismatch');
+						result.inspectionOutcome = 'filter_mismatch';
+						inspectSpan.setAttribute(
+							'reservation.filter_code',
+							selectedDate !== requestedDate
+								? 'date_control'
+								: selectedUrlDate !== input.date
+									? 'url_date'
+									: 'party_control'
+						);
 						result.availability =
 							'Provider filters could not be verified; these are candidate links only.';
 						return result;
@@ -221,8 +274,45 @@ export async function findReservationPages(
 						await page.locator('button').nth(more.moreButtonIndex).click();
 						experiences = await readCards(page);
 					}
-					const visibleTimes = [...new Set(experiences.flatMap((experience) => experience.times))];
-					inspectSpan.setAttribute('reservation.visible_time_count', visibleTimes.length);
+					const complete = !experiences.some((experience) => experience.moreButtonIndex >= 0);
+					const providerVisibleTimeCount = new Set(
+						experiences.flatMap((experience) => experience.times)
+					).size;
+					if (window) {
+						const start =
+							Number(window.startTime.slice(0, 2)) * 60 + Number(window.startTime.slice(3)) - 30;
+						const end =
+							Number(window.endTime.slice(0, 2)) * 60 + Number(window.endTime.slice(3)) + 30;
+						experiences = experiences
+							.map((experience) => ({
+								...experience,
+								times: experience.times.filter(
+									(time) => minutes(time) >= start && minutes(time) <= end
+								)
+							}))
+							.filter((experience) => experience.times.length > 0);
+					}
+					const visibleTimes = [
+						...new Set(experiences.flatMap((experience) => experience.times))
+					].sort((a, b) => minutes(a) - minutes(b));
+					const requestedStart = window
+						? Number(window.startTime.slice(0, 2)) * 60 + Number(window.startTime.slice(3))
+						: 0;
+					const requestedEnd = window
+						? Number(window.endTime.slice(0, 2)) * 60 + Number(window.endTime.slice(3))
+						: 0;
+					const requestedTimes = window
+						? visibleTimes.filter(
+								(time) => minutes(time) >= requestedStart && minutes(time) <= requestedEnd
+							)
+						: visibleTimes;
+					const nearbyTimes = window
+						? visibleTimes.filter(
+								(time) => minutes(time) < requestedStart || minutes(time) > requestedEnd
+							)
+						: [];
+					inspectSpan.setAttribute('reservation.visible_time_count', providerVisibleTimeCount);
+					result.inspectionOutcome = 'verified';
 					result.inspection = {
 						url: filteredUrl.toString(),
 						venue: restaurant,
@@ -231,11 +321,17 @@ export async function findReservationPages(
 						checkedAt: new Date().toISOString(),
 						experiences: experiences.map(({ name, times }) => ({ name, times })),
 						visibleTimes,
-						complete: !experiences.some((experience) => experience.moreButtonIndex >= 0)
+						timeGroups: { requested: requestedTimes, nearby: nearbyTimes },
+						providerVisibleTimeCount,
+						complete
 					};
 					if (visibleTimes.length) {
+						result.availability = window
+							? 'Verified times within the requested window (plus 30 minutes); availability may change.'
+							: 'Visible times for the requested date and party; availability may change.';
+					} else if (window && providerVisibleTimeCount) {
 						result.availability =
-							'Visible times for the requested date and party; availability may change.';
+							'No verified times within the requested window (plus 30 minutes); the provider showed times outside it.';
 					} else {
 						result.availability = 'No times verified for the selected date and party.';
 					}
@@ -247,13 +343,30 @@ export async function findReservationPages(
 			}
 		} catch (cause) {
 			inspectSpan.setAttribute('outcome', 'inspection_error');
+			if (!result.inspection) result.inspectionOutcome = 'retryable_failure';
+			const message = cause instanceof Error ? cause.message : '';
+			const code = /timeout|timed out/i.test(message)
+				? 'timeout'
+				: /frame|iframe/i.test(message)
+					? 'frame'
+					: /cdp|protocol/i.test(message)
+						? 'protocol'
+						: /network|fetch|socket/i.test(message)
+							? 'network'
+							: 'unknown';
 			Sentry.withScope((scope) => {
 				scope.setTag('reservation.inspection_stage', inspectionStage);
+				scope.setTag(
+					'reservation.inspection_operation',
+					inspectionStage === 'verify_filters' ? inspectionOperation : inspectionStage
+				);
+				scope.setTag('reservation.error_code', code);
 				scope.setTag('reservation.error_type', cause instanceof Error ? cause.name : 'unknown');
 				Sentry.captureMessage('SevenRooms page inspection failed', 'warning');
 			});
-			result.availability =
-				'Reservation page inspection was unavailable; these are candidate links only.';
+			if (!result.inspection)
+				result.availability =
+					'Reservation page inspection was unavailable; these are candidate links only.';
 		} finally {
 			if (sessionId)
 				await onSession?.({ open: false, id: sessionId, venue: restaurant }).catch(() => undefined);

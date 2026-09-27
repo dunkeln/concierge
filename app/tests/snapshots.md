@@ -48,7 +48,7 @@ Observed 2026-09-26: an inspection missed visible dinner times, mixed in “Next
 
 Check that Concierge verifies the provider's date and party filters, shows only times for that date, keeps the experience with the selected time, and rechecks the exact slot before checkout. If only a candidate page or partial inspection is available, say so without inventing times. Stop before guest details, payment, or submission.
 
-For a 7–9 pm dinner request, the calendar should offer only matching times. A live run on September 27 showed a 7:00 am breakfast choice alongside the dinner answer; selecting it led to a failed checkout handoff. A second run selecting a 7–9 pm slot reached the live checkout view.
+For a 7–9 pm dinner request, the calendar should offer matching times and clearly labeled verified options within 30 minutes on either side. It must not offer breakfast. A live run on September 27 showed a 7:00 am breakfast choice alongside the dinner answer; selecting it led to a failed checkout handoff. A later run selecting a 7–9 pm slot reached the live checkout view.
 
 ## Expired reservation result
 

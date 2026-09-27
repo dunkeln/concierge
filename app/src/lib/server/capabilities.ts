@@ -243,7 +243,7 @@ export const capabilities: Record<string, Capability> = {
 	},
 	'reservations.find': {
 		description:
-			'Find nearby restaurants or cafés in a public area and their reservation pages in one call. A supported reservation page may show expanded times for a specified date and party size. Place listings and other booking links are not verified availability. Call separately for each stop in a multi-stop plan. No booking is made.',
+			'Find nearby restaurants or cafés in a public area and their reservation pages in one call. A supported reservation page may show expanded times for a specified date and party size. Include startTime and endTime when the user requests a time window; matching provider times include 30 minutes on either side. Place listings and other booking links are not verified availability. Call separately for each stop in a multi-stop plan. No booking is made.',
 		input: {
 			restaurant: 'Restaurant or café name from places.search, if known',
 			area: 'Public neighborhood and city, such as West Village, New York City',
@@ -252,6 +252,9 @@ export const capabilities: Record<string, Capability> = {
 				'Optional cuisine explicitly requested by the user; used only when supported by a place category',
 			date: 'Optional requested date as YYYY-MM-DD',
 			partySize: 'Optional number of guests, 1–12',
+			startTime: 'Optional requested window start, local 24-hour HH:mm; provide with endTime',
+			endTime:
+				'Optional requested window end, local 24-hour HH:mm; exact provider times within 30 minutes on either side are shown',
 			calendarView: 'Optional month, day, or time view for the reservation calendar'
 		},
 		run: async (input, onBrowserSession, context) => {

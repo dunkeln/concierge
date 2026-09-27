@@ -1,6 +1,7 @@
 # Reservation flow
 
 - Find and show all verified times for the requested date, party size, and window. Distinguish live availability from candidate places and incomplete searches.
+- When a time window is given, keep exact matches distinct from verified times up to 30 minutes nearby. Retry a failed supported-page inspection once; a booking link alone never establishes availability.
 - Keep place identity across turns. Expire time-sensitive observations by their check time: reservation times after 60 seconds and current weather after 10 minutes; recheck before checkout or a new claim of current availability. Expired facts stay in the visible transcript as history, not as selectable times or live evidence.
 - Search by venue, neighborhood, or named public origin. Show origin and destination pins; use travel time for “nearby.” Explore neighborhoods as areas with sourced context, not unsupported scores.
 - Rank eligible place listings by the requested venue and sourced cuisine category, then use explicit preferences as a tie-break. Apply the evidence and feedback rules in [recommendations.md](recommendations.md).

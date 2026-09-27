@@ -271,6 +271,7 @@
 		partySize: number;
 		sourceUrl?: string;
 		experiences?: { name: string; times: string[] }[];
+		timeGroups?: { requested: string[]; nearby: string[] };
 		times: string[];
 		calendarView?: CalendarViewMode;
 		complete: boolean;
@@ -352,6 +353,10 @@
 					times: Array.isArray(inspection?.visibleTimes)
 						? inspection.visibleTimes.filter((time): time is string => typeof time === 'string')
 						: [],
+					...(inspection?.timeGroups &&
+					Array.isArray((inspection.timeGroups as Record<string, unknown>).nearby)
+						? { timeGroups: inspection.timeGroups as { requested: string[]; nearby: string[] } }
+						: {}),
 					complete: inspection?.complete === true,
 					checkedAt: typeof inspection?.checkedAt === 'string' ? inspection.checkedAt : null,
 					status: typeof output?.availability === 'string' ? output.availability : 'Not checked.'
