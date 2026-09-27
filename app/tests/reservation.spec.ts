@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test';
+import Browserbase from '@browserbasehq/sdk';
 import { createUIMessageStream, createUIMessageStreamResponse } from 'ai';
+import { decodeJwt } from 'jose';
 import { reservationCase as sample } from './reservation-case';
 
 test('chat shows actionable request errors', async ({ page }) => {
@@ -202,4 +204,61 @@ test('expired reservation times require a new check', async ({ page }) => {
 	await expect(calendar.getByRole('button', { name: sample.times[0] })).toHaveCount(0);
 	await calendar.getByRole('button', { name: 'Check again' }).click();
 	await expect.poll(() => calls).toBe(2);
+});
+
+test('live reservation search reaches the checkout handoff', async ({ page }) => {
+	test.skip(
+		process.env.RUN_LIVE_RESERVATION !== '1',
+		'Set RUN_LIVE_RESERVATION=1 and LIVE_RESERVATION_DATE to run against SevenRooms.'
+	);
+	const date = process.env.LIVE_RESERVATION_DATE;
+	expect(date, 'Set LIVE_RESERVATION_DATE=YYYY-MM-DD for a future date with inventory.').toMatch(
+		/^\d{4}-\d{2}-\d{2}$/
+	);
+	test.setTimeout(180_000);
+	let sessionId: string | undefined;
+	await page.goto('/');
+	await page
+		.getByLabel('Your reservation request')
+		.fill(
+			`Find every dinner time for two at Ai Fiori in New York City on ${date}, 7–9 PM. Show only times verified on the reservation page.`
+		);
+	await page.getByRole('button', { name: 'Send message' }).click();
+	try {
+		const calendar = page.getByRole('region', { name: 'Reservation calendar' });
+		await expect(calendar).toBeVisible({ timeout: 100_000 });
+		await expect(calendar.getByLabel('Date')).toHaveValue(date!);
+		const time = calendar.getByRole('button', { name: /^[78]:\d{2} PM(?: · .+)?$/ }).first();
+		await expect(time, 'The agent must expose a provider-verified time.').toBeVisible();
+		await time.click();
+		await expect(page.getByRole('button', { name: 'Continue to checkout' })).toBeEnabled({
+			timeout: 30_000
+		});
+		await page.getByRole('button', { name: 'Continue to checkout' }).click();
+		const checkout = page.getByRole('link', { name: 'View checkout in live browser' });
+		await expect(checkout).toBeVisible({
+			timeout: 100_000
+		});
+		await expect(page.getByText('No booking was submitted.')).toBeVisible();
+		const href = (await checkout.getAttribute('href'))!;
+		const ticket = new URL(href, page.url()).searchParams.get('ticket');
+		sessionId = (decodeJwt(ticket!).sid as string | undefined) ?? undefined;
+		expect(sessionId).toBeTruthy();
+		const response = await page.request.get(href, {
+			maxRedirects: 0
+		});
+		expect(response.status()).toBe(302);
+		expect(new URL(response.headers().location).hostname).toMatch(/(^|\.)browserbase\.com$/);
+	} finally {
+		await test.info().attach('reservation-transcript', {
+			body: await page.locator('main').innerText(),
+			contentType: 'text/plain'
+		});
+		if (sessionId && process.env.BROWSERBASE_API_KEY) {
+			await new Browserbase({ apiKey: process.env.BROWSERBASE_API_KEY }).sessions.update(
+				sessionId,
+				{ status: 'REQUEST_RELEASE' }
+			);
+		}
+	}
 });
