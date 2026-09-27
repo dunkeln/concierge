@@ -15,6 +15,14 @@ Record a new entry only when a failure or limitation is observed and useful to r
 
 ## Entries
 
+### 2026-09-26 — Scene cards repeated the same composition
+
+- Evidence: Five separate card images reused people seated at a table beneath similar lamps or windows; the repetition was visible in the local carousel.
+- Cause: The initial artwork varied the mood but kept nearly identical framing.
+- Change: Give Catch up, Date night, Take it easy, Weekend brunch, and Coffee catch-up distinct settings and viewpoints while retaining the ink-and-ivory style.
+- Verification: The local home loaded the replacement artwork; all seven image paths are distinct and present, and `bun run check` passed.
+- Remaining limit: These are editorial prompts, not real venue photos.
+
 ### 2026-09-26 — Empty chat framed every outing as dinner
 
 - Evidence: The home screen said “Your kind of night,” and its cards and composer prompt only suggested dinner, despite the requested coffee use case.

@@ -21,13 +21,13 @@
 		Coffee: 'Coffee catch-up'
 	};
 	const sceneImages: Record<(typeof scenarios)[number]['atmosphere'], string> = {
-		Quiet: '/editorial/dinner-table-v2.png',
+		Quiet: '/editorial/catch-up-outdoors.png',
 		Lively: '/editorial/lively-night.png',
-		Intimate: '/editorial/intimate-night.png',
-		Casual: '/editorial/casual-night.png',
+		Intimate: '/editorial/rooftop-date.png',
+		Casual: '/editorial/easy-counter.png',
 		Adventurous: '/editorial/restaurant-arrival-v2.png',
-		Brunch: '/editorial/weekend-brunch.png',
-		Coffee: '/editorial/coffee-catch-up.png'
+		Brunch: '/editorial/brunch-table.png',
+		Coffee: '/editorial/coffee-bar.png'
 	};
 	let sceneCards = $derived(
 		[
