@@ -7,13 +7,16 @@ import {
 	convertToModelMessages,
 	createUIMessageStream,
 	createUIMessageStreamResponse,
+	generateText,
 	jsonSchema,
 	safeValidateUIMessages,
 	stepCountIs,
 	streamText,
 	tool
 } from 'ai';
+import { beginTurn, finishTurn, readMessages, saveThreadTitle, threadIdPattern } from '$lib/server/chats';
 import intakeStage from '$lib/server/stages/intake.md?raw';
+import titlePrompt from '$lib/server/stages/title.md?raw';
 import { capabilities } from '$lib/server/capabilities';
 import { loadDiningContext } from '$lib/server/profile/context';
 import { cuisines } from '$lib/onboarding';
@@ -54,6 +57,8 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		error(400, 'Invalid request.');
 	}
 
+	const threadId = (payload as { threadId?: unknown })?.threadId;
+	if (typeof threadId !== 'string' || !threadIdPattern.test(threadId)) error(400, 'Invalid chat.');
 	const messages = (payload as { messages?: unknown })?.messages;
 	if (!Array.isArray(messages) || messages.length < 1 || messages.length > 20) {
 		error(400, 'Invalid conversation.');
@@ -158,382 +163,463 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			...(typeof sourceUrl === 'string' ? { sourceUrl } : {})
 		};
 	}
-	const prepareRequested =
-		selectedSlot?.sourceUrl &&
-		validated.data
-			.at(-1)
-			?.parts.some(
-				(part) =>
-					part.type === 'text' &&
-					part.text ===
-						'Continue my selected time to checkout. Stop before entering guest or payment details or submitting.'
-			);
-	const diningContext = await loadDiningContext(userId, sessionCuisine);
-
-	const openrouter = createOpenAI({
-		apiKey: env.OPENROUTER_API_KEY,
-		baseURL: 'https://openrouter.ai/api/v1',
-		name: 'openrouter'
+	const incoming = validated.data.at(-1)!;
+	if (!incoming.id || incoming.id.length > 100) error(400, 'Invalid message.');
+	const turn = await beginTurn(threadId, userId, incoming, {
+		selectedPlace,
+		preferredCuisine: sessionCuisine ?? null,
+		selectedDate,
+		selectedSlot
 	});
-	const history = validated.data
-		.map((message) => ({
-			...message,
-			parts: message.parts.flatMap((part) => {
-				if (part.type === 'text') return [part];
-				if (part.type !== 'tool-execute' || part.state !== 'output-available') return [];
-				const output = part.output as { kind?: unknown; question?: unknown } | null;
-				return output?.kind === 'followup' && typeof output.question === 'string'
-					? [{ type: 'text' as const, text: output.question }]
-					: [];
-			})
-		}))
-		.filter((message) => message.parts.length);
-	const recentFindings = validated.data
-		.slice(0, -1)
-		.flatMap((message) =>
-			message.role === 'assistant'
-				? message.parts.flatMap<Record<string, unknown>>((part) => {
-						if (part.type !== 'tool-execute' || part.state !== 'output-available') return [];
-						const output = part.output as Record<string, unknown> | null;
-						if (!output || typeof output !== 'object') return [];
-						const references: Record<string, unknown>[] = [];
-						if (typeof output.area === 'string' && Array.isArray(output.places)) {
-							references.push({
-								area: output.area.slice(0, 200),
-								source: 'mapped place listing',
-								places: output.places.slice(0, 25).flatMap((place: unknown) => {
-									if (!place || typeof place !== 'object') return [];
-									const { name, address, categories, lat, lon } = place as Record<string, unknown>;
-									if (
-										typeof name !== 'string' ||
-										typeof lat !== 'number' ||
-										!Number.isFinite(lat) ||
-										typeof lon !== 'number' ||
-										!Number.isFinite(lon)
-									)
-										return [];
-									return [
-										{
-											name: name.slice(0, 100),
-											...(typeof address === 'string' ? { address: address.slice(0, 200) } : {}),
-											categories: Array.isArray(categories)
-												? categories
-														.filter((value): value is string => typeof value === 'string')
-														.slice(0, 8)
-												: [],
-											lat,
-											lon
-										}
-									];
-								})
-							});
-						}
-						if (
-							Array.isArray(output.pages) &&
-							output.request &&
-							typeof output.request === 'object'
-						) {
-							references.push({
-								provider: 'reservation page search',
-								request: {
-									venue:
-										typeof (output.request as Record<string, unknown>).venue === 'string'
-											? String((output.request as Record<string, unknown>).venue).slice(0, 100)
-											: '',
-									date:
-										typeof (output.request as Record<string, unknown>).date === 'string'
-											? String((output.request as Record<string, unknown>).date).slice(0, 10)
-											: null,
-									partySize:
-										typeof (output.request as Record<string, unknown>).partySize === 'number'
-											? (output.request as Record<string, unknown>).partySize
-											: null
-								},
-								pages: output.pages.slice(0, 5).flatMap((page: unknown) => {
-									if (!page || typeof page !== 'object') return [];
-									const { title, url } = page as Record<string, unknown>;
-									return typeof title === 'string' && typeof url === 'string'
-										? [{ title: title.slice(0, 150), url: url.slice(0, 2_000) }]
-										: [];
-								})
-							});
-						}
-						return references;
-					})
-				: []
-		)
-		.slice(-2);
-	const timedFindings = validated.data
-		.slice(0, -1)
-		.flatMap((message) =>
-			message.role === 'assistant'
-				? message.parts.flatMap<{
-						kind: string;
-						checkedAt: string;
-						fresh: boolean;
-						reference: Record<string, unknown>;
-						value: Record<string, unknown>;
-					}>((part) => {
-						if (part.type !== 'tool-execute' || part.state !== 'output-available') return [];
-						const output = part.output as Record<string, unknown> | null;
-						if (!output || typeof output !== 'object') return [];
-						if (
-							typeof output.temperature === 'number' &&
-							Number.isFinite(output.temperature) &&
-							typeof output.checkedAt === 'string'
-						) {
-							return [
-								{
-									kind: 'weather',
-									checkedAt: output.checkedAt,
-									fresh:
-										isFresh(output.checkedAt, WEATHER_TTL_MS) &&
-										isFresh(output.observedAt, 20 * 60_000),
-									reference: {
-										latitude: typeof output.latitude === 'number' ? output.latitude : null,
-										longitude: typeof output.longitude === 'number' ? output.longitude : null
-									},
-									value: {
-										temperature: output.temperature,
-										unit: typeof output.unit === 'string' ? output.unit.slice(0, 20) : null,
-										condition:
-											typeof output.condition === 'string' ? output.condition.slice(0, 100) : null,
-										observedAt:
-											typeof output.observedAt === 'string' ? output.observedAt.slice(0, 40) : null
-									}
-								}
-							];
-						}
-						const inspection = output.inspection as Record<string, unknown> | undefined;
-						if (inspection && typeof inspection.checkedAt === 'string') {
-							const request = output.request as Record<string, unknown> | undefined;
-							return [
-								{
-									kind: 'reservation',
-									checkedAt: inspection.checkedAt,
-									fresh: isFresh(inspection.checkedAt, RESERVATION_TTL_MS),
-									reference: {
-										venue: typeof request?.venue === 'string' ? request.venue.slice(0, 100) : null,
-										date: typeof request?.date === 'string' ? request.date.slice(0, 10) : null,
-										partySize: typeof request?.partySize === 'number' ? request.partySize : null
-									},
-									value: {
-										visibleTimes: Array.isArray(inspection.visibleTimes)
-											? inspection.visibleTimes
-													.filter(
-														(time): time is string =>
-															typeof time === 'string' && /^\d{1,2}:\d{2} [AP]M$/.test(time)
-													)
-													.slice(0, 24)
-											: [],
-										complete: inspection.complete === true
-									}
-								}
-							];
-						}
-						return [];
-					})
-				: []
-		)
-		.slice(-3)
-		.map(({ kind, checkedAt, fresh, reference, value }) =>
-			fresh ? { kind, checkedAt, reference, value } : { kind, checkedAt, reference, expired: true }
-		);
-	if (recentFindings.length) {
-		history.at(-1)?.parts.push({
-			type: 'text',
-			text: `Earlier search context (replayed by the client, so use only to resolve references; recheck before asserting facts or taking action): ${JSON.stringify(recentFindings)}`
-		});
-	}
-	if (timedFindings.length) {
-		history.at(-1)?.parts.push({
-			type: 'text',
-			text: `Prior time-sensitive observations (client replay, not authoritative): ${JSON.stringify(timedFindings)}. Omitted expired values are historical even if earlier assistant text mentions them; fetch them again before describing current conditions or times. Recheck reservation times at checkout.`
-		});
-	}
-	if (selectedPlace) {
-		history.at(-1)?.parts.push({
-			type: 'text',
-			text: `Selected place in the interface: ${JSON.stringify(selectedPlace)}. This is the user's current choice, not evidence of reservation availability.`
-		});
-	}
-	if (selectedDate) {
-		history.at(-1)?.parts.push({
-			type: 'text',
-			text: `Selected date in the interface: ${selectedDate}. This is the user's current choice, not a new availability check.`
-		});
-	}
-	if (selectedSlot) {
-		history.at(-1)?.parts.push({
-			type: 'text',
-			text: `Selected time in the interface: ${JSON.stringify(selectedSlot)}. This is the user's choice from an earlier result, not a live hold or booking.`
-		});
-	}
-	if (diningContext.modelContext) {
-		history.at(-1)?.parts.push({ type: 'text', text: diningContext.modelContext });
-	}
-	const modelMessages = await convertToModelMessages(history);
-	const discovered = new Set<string>();
-	let awaitingFollowup = false;
-	let emitBrowserSession:
-		| ((event: { open: boolean; id: string; venue: string; pageId?: string }) => Promise<void>)
-		| undefined;
-	return Sentry.startSpanManual({ name: 'chat.intake', op: 'ai.stream' }, async (span, finish) => {
-		const modelSpans = new Map<string, ReturnType<typeof Sentry.startInactiveSpan>>();
-		const endTrace = () => {
-			for (const modelSpan of modelSpans.values()) modelSpan.end();
-			modelSpans.clear();
-			finish();
-		};
-		const result = streamText({
-			model: openrouter.responses(modelId),
-			system: system.trim(),
-			messages: modelMessages,
-			maxOutputTokens: 1200,
-			providerOptions: { openai: { reasoningEffort: 'low', forceReasoning: true, store: false } },
-			tools: {
-				search: tool({
-					description: 'Discover available capabilities and their inputs.',
-					inputSchema: jsonSchema<{ query: string }>({
-						type: 'object',
-						properties: { query: { type: 'string' } },
-						required: ['query'],
-						additionalProperties: false
-					}),
-					execute: async () => ({
-						capabilities: Object.entries(capabilities)
-							.filter(([name]) => name !== 'reservations.prepare' || prepareRequested)
-							.map(([name, capability]) => {
-								discovered.add(name);
-								return { name, description: capability.description, input: capability.input };
-							})
-					})
-				}),
-				execute: tool({
-					description: 'Run a capability returned by search using its documented input.',
-					inputSchema: jsonSchema<{ name: string; input: Record<string, unknown> }>({
-						type: 'object',
-						properties: { name: { type: 'string' }, input: { type: 'object' } },
-						required: ['name', 'input'],
-						additionalProperties: false
-					}),
-					execute: async ({ name, input }) => {
-						if (awaitingFollowup) return { error: 'Waiting for the user.' };
-						if (!discovered.has(name) || !Object.hasOwn(capabilities, name)) {
-							return { error: 'Search for this capability before executing it.' };
-						}
-						if (name === 'reservations.prepare') {
-							if (!prepareRequested || !selectedSlot?.sourceUrl)
-								return { error: 'Select a time and choose Continue to checkout first.' };
-							const outcome = (await Sentry.startSpan(
-								{ name: 'capability.reservations.prepare', op: 'agent.tool' },
-								() => capabilities[name].run(selectedSlot as Record<string, unknown>)
-							)) as Record<string, unknown>;
-							if (
-								outcome.status !== 'checkout_ready' ||
-								typeof outcome.sessionId !== 'string' ||
-								typeof outcome.pageId !== 'string' ||
-								typeof outcome.expiresAt !== 'number'
-							)
-								return outcome;
-							const { sessionId, pageId, expiresAt, ...observation } = outcome;
-							const ticket = await new SignJWT({ sid: sessionId, pid: pageId })
-								.setProtectedHeader({ alg: 'HS256' })
-								.setSubject(userId)
-								.setExpirationTime(expiresAt)
-								.sign(new TextEncoder().encode(env.BETTER_AUTH_SECRET));
-							return { ...observation, viewPath: `/api/reservations/view?ticket=${ticket}` };
-						}
-						const outcome = await Sentry.startSpan(
-							{ name: `capability.${name}`, op: 'agent.tool' },
-							async () =>
-								capabilities[name].run(
-									input,
-									name === 'reservations.find' ? emitBrowserSession : undefined,
-									name === 'places.search' || name === 'reservations.find'
-										? {
-												preferredCuisines: diningContext.rankingCuisines
-											}
-										: undefined
-								)
-						);
-						if (name === 'followup' && (outcome as { kind?: string })?.kind === 'followup')
-							awaitingFollowup = true;
-						return outcome;
-					}
-				})
-			},
-			stopWhen: [
-				stepCountIs(7),
-				({ steps }) =>
-					steps
-						.at(-1)
-						?.toolResults.some(
-							(result) =>
-								result.toolName === 'execute' &&
-								typeof result.output === 'object' &&
-								result.output !== null &&
-								'kind' in result.output &&
-								result.output.kind === 'followup'
-						) ?? false
-			],
-			onLanguageModelCallStart: ({ callId }) => {
-				modelSpans.set(
-					callId,
-					Sentry.startInactiveSpan({ name: 'openrouter.generate', op: 'ai.model' })
+	try {
+		const [saved, diningContext] = await Promise.all([
+			readMessages(threadId, undefined, 19),
+			loadDiningContext(userId, sessionCuisine)
+		]);
+		const previous = saved
+			.map((row) => row.message)
+			.filter((message) => message.id !== incoming.id)
+			.slice(-18);
+		while (previous[0]?.role === 'assistant') previous.shift();
+		const conversation = [...previous, incoming];
+		const prepareRequested =
+			selectedSlot?.sourceUrl &&
+			conversation
+				.at(-1)
+				?.parts.some(
+					(part) =>
+						part.type === 'text' &&
+						part.text ===
+							'Continue my selected time to checkout. Stop before entering guest or payment details or submitting.'
 				);
-			},
-			onLanguageModelCallEnd: ({ callId, finishReason }) => {
-				const modelSpan = modelSpans.get(callId);
-				modelSpan?.setAttribute('ai.finish_reason', finishReason);
-				modelSpan?.end();
-				modelSpans.delete(callId);
-			},
-			onEnd: endTrace,
-			onAbort: endTrace,
-			onError: ({ error: streamError }) => {
-				span.setAttribute('outcome', 'error');
-				Sentry.withScope((scope) => {
-					scope.setTag(
-						'chat.error_type',
-						streamError instanceof Error ? streamError.name : 'unknown'
-					);
-					if (
-						typeof streamError === 'object' &&
-						streamError !== null &&
-						'statusCode' in streamError &&
-						typeof streamError.statusCode === 'number'
-					)
-						scope.setTag('chat.status_code', streamError.statusCode);
-					Sentry.captureMessage('Chat stream failed', 'warning');
-				});
-				endTrace();
-			}
-		});
 
-		return createUIMessageStreamResponse({
-			stream: createUIMessageStream({
-				onError: publicStreamError,
-				execute({ writer }) {
-					emitBrowserSession = async ({ open, id, venue, pageId }) => {
-						if (!open) {
-							writer.write({ type: 'data-browser', data: { open, id }, transient: true });
-							return;
-						}
-						const ticket = await new SignJWT({ sid: id, pid: pageId, scope: 'preview' })
-							.setProtectedHeader({ alg: 'HS256' })
-							.setSubject(userId)
-							.setExpirationTime(Math.floor(Date.now() / 1_000) + 120)
-							.sign(new TextEncoder().encode(env.BETTER_AUTH_SECRET));
-						writer.write({
-							type: 'data-browser',
-							data: { open, id, venue, viewPath: `/api/reservations/view?ticket=${ticket}` },
-							transient: true
-						});
-					};
-					writer.merge(result.toUIMessageStream({ onError: publicStreamError }));
-				}
-			})
+		const openrouter = createOpenAI({
+			apiKey: env.OPENROUTER_API_KEY,
+			baseURL: 'https://openrouter.ai/api/v1',
+			name: 'openrouter'
 		});
-	});
+		const history = conversation
+			.map((message) => ({
+				...message,
+				parts: message.parts.flatMap((part) => {
+					if (part.type === 'text') return [part];
+					if (part.type !== 'tool-execute' || part.state !== 'output-available') return [];
+					const output = part.output as { kind?: unknown; question?: unknown } | null;
+					return output?.kind === 'followup' && typeof output.question === 'string'
+						? [{ type: 'text' as const, text: output.question }]
+						: [];
+				})
+			}))
+			.filter((message) => message.parts.length);
+		const recentFindings = conversation
+			.slice(0, -1)
+			.flatMap((message) =>
+				message.role === 'assistant'
+					? message.parts.flatMap<Record<string, unknown>>((part) => {
+							if (part.type !== 'tool-execute' || part.state !== 'output-available') return [];
+							const output = part.output as Record<string, unknown> | null;
+							if (!output || typeof output !== 'object') return [];
+							const references: Record<string, unknown>[] = [];
+							if (typeof output.area === 'string' && Array.isArray(output.places)) {
+								references.push({
+									area: output.area.slice(0, 200),
+									source: 'mapped place listing',
+									places: output.places.slice(0, 25).flatMap((place: unknown) => {
+										if (!place || typeof place !== 'object') return [];
+										const { name, address, categories, lat, lon } = place as Record<
+											string,
+											unknown
+										>;
+										if (
+											typeof name !== 'string' ||
+											typeof lat !== 'number' ||
+											!Number.isFinite(lat) ||
+											typeof lon !== 'number' ||
+											!Number.isFinite(lon)
+										)
+											return [];
+										return [
+											{
+												name: name.slice(0, 100),
+												...(typeof address === 'string' ? { address: address.slice(0, 200) } : {}),
+												categories: Array.isArray(categories)
+													? categories
+															.filter((value): value is string => typeof value === 'string')
+															.slice(0, 8)
+													: [],
+												lat,
+												lon
+											}
+										];
+									})
+								});
+							}
+							if (
+								Array.isArray(output.pages) &&
+								output.request &&
+								typeof output.request === 'object'
+							) {
+								references.push({
+									provider: 'reservation page search',
+									request: {
+										venue:
+											typeof (output.request as Record<string, unknown>).venue === 'string'
+												? String((output.request as Record<string, unknown>).venue).slice(0, 100)
+												: '',
+										date:
+											typeof (output.request as Record<string, unknown>).date === 'string'
+												? String((output.request as Record<string, unknown>).date).slice(0, 10)
+												: null,
+										partySize:
+											typeof (output.request as Record<string, unknown>).partySize === 'number'
+												? (output.request as Record<string, unknown>).partySize
+												: null
+									},
+									pages: output.pages.slice(0, 5).flatMap((page: unknown) => {
+										if (!page || typeof page !== 'object') return [];
+										const { title, url } = page as Record<string, unknown>;
+										return typeof title === 'string' && typeof url === 'string'
+											? [{ title: title.slice(0, 150), url: url.slice(0, 2_000) }]
+											: [];
+									})
+								});
+							}
+							return references;
+						})
+					: []
+			)
+			.slice(-2);
+		const timedFindings = conversation
+			.slice(0, -1)
+			.flatMap((message) =>
+				message.role === 'assistant'
+					? message.parts.flatMap<{
+							kind: string;
+							checkedAt: string;
+							fresh: boolean;
+							reference: Record<string, unknown>;
+							value: Record<string, unknown>;
+						}>((part) => {
+							if (part.type !== 'tool-execute' || part.state !== 'output-available') return [];
+							const output = part.output as Record<string, unknown> | null;
+							if (!output || typeof output !== 'object') return [];
+							if (
+								typeof output.temperature === 'number' &&
+								Number.isFinite(output.temperature) &&
+								typeof output.checkedAt === 'string'
+							) {
+								return [
+									{
+										kind: 'weather',
+										checkedAt: output.checkedAt,
+										fresh:
+											isFresh(output.checkedAt, WEATHER_TTL_MS) &&
+											isFresh(output.observedAt, 20 * 60_000),
+										reference: {
+											latitude: typeof output.latitude === 'number' ? output.latitude : null,
+											longitude: typeof output.longitude === 'number' ? output.longitude : null
+										},
+										value: {
+											temperature: output.temperature,
+											unit: typeof output.unit === 'string' ? output.unit.slice(0, 20) : null,
+											condition:
+												typeof output.condition === 'string'
+													? output.condition.slice(0, 100)
+													: null,
+											observedAt:
+												typeof output.observedAt === 'string'
+													? output.observedAt.slice(0, 40)
+													: null
+										}
+									}
+								];
+							}
+							const inspection = output.inspection as Record<string, unknown> | undefined;
+							if (inspection && typeof inspection.checkedAt === 'string') {
+								const request = output.request as Record<string, unknown> | undefined;
+								return [
+									{
+										kind: 'reservation',
+										checkedAt: inspection.checkedAt,
+										fresh: isFresh(inspection.checkedAt, RESERVATION_TTL_MS),
+										reference: {
+											venue:
+												typeof request?.venue === 'string' ? request.venue.slice(0, 100) : null,
+											date: typeof request?.date === 'string' ? request.date.slice(0, 10) : null,
+											partySize: typeof request?.partySize === 'number' ? request.partySize : null
+										},
+										value: {
+											visibleTimes: Array.isArray(inspection.visibleTimes)
+												? inspection.visibleTimes
+														.filter(
+															(time): time is string =>
+																typeof time === 'string' && /^\d{1,2}:\d{2} [AP]M$/.test(time)
+														)
+														.slice(0, 24)
+												: [],
+											complete: inspection.complete === true
+										}
+									}
+								];
+							}
+							return [];
+						})
+					: []
+			)
+			.slice(-3)
+			.map(({ kind, checkedAt, fresh, reference, value }) =>
+				fresh
+					? { kind, checkedAt, reference, value }
+					: { kind, checkedAt, reference, expired: true }
+			);
+		if (recentFindings.length) {
+			history.at(-1)?.parts.push({
+				type: 'text',
+				text: `Earlier saved search context (use to resolve references; recheck before asserting current facts or taking action): ${JSON.stringify(recentFindings)}`
+			});
+		}
+		if (timedFindings.length) {
+			history.at(-1)?.parts.push({
+				type: 'text',
+				text: `Prior time-sensitive observations (saved observation, not current evidence): ${JSON.stringify(timedFindings)}. Omitted expired values are historical even if earlier assistant text mentions them; fetch them again before describing current conditions or times. Recheck reservation times at checkout.`
+			});
+		}
+		if (selectedPlace) {
+			history.at(-1)?.parts.push({
+				type: 'text',
+				text: `Selected place in the interface: ${JSON.stringify(selectedPlace)}. This is the user's current choice, not evidence of reservation availability.`
+			});
+		}
+		if (selectedDate) {
+			history.at(-1)?.parts.push({
+				type: 'text',
+				text: `Selected date in the interface: ${selectedDate}. This is the user's current choice, not a new availability check.`
+			});
+		}
+		if (selectedSlot) {
+			history.at(-1)?.parts.push({
+				type: 'text',
+				text: `Selected time in the interface: ${JSON.stringify(selectedSlot)}. This is the user's choice from an earlier result, not a live hold or booking.`
+			});
+		}
+		if (diningContext.modelContext) {
+			history.at(-1)?.parts.push({ type: 'text', text: diningContext.modelContext });
+		}
+		const modelMessages = await convertToModelMessages(history);
+		const discovered = new Set<string>();
+		let awaitingFollowup = false;
+		let emitBrowserSession:
+			| ((event: { open: boolean; id: string; venue: string; pageId?: string }) => Promise<void>)
+			| undefined;
+		return await Sentry.startSpanManual(
+			{ name: 'chat.intake', op: 'ai.stream' },
+			async (span, finish) => {
+				const runId = request.headers.get('x-e2e-run-id');
+				if (runId && /^[a-f0-9-]{36}$/.test(runId)) span.setAttribute('e2e.run_id', runId);
+				const modelSpans = new Map<string, ReturnType<typeof Sentry.startInactiveSpan>>();
+				const endTrace = () => {
+					for (const modelSpan of modelSpans.values()) modelSpan.end();
+					modelSpans.clear();
+					finish();
+				};
+				const result = streamText({
+					model: openrouter.responses(modelId),
+					system: system.trim(),
+					messages: modelMessages,
+					maxOutputTokens: 1200,
+					providerOptions: {
+						openai: { reasoningEffort: 'low', forceReasoning: true, store: false }
+					},
+					tools: {
+						search: tool({
+							description: 'Discover available capabilities and their inputs.',
+							inputSchema: jsonSchema<{ query: string }>({
+								type: 'object',
+								properties: { query: { type: 'string' } },
+								required: ['query'],
+								additionalProperties: false
+							}),
+							execute: async () => ({
+								capabilities: Object.entries(capabilities)
+									.filter(([name]) => name !== 'reservations.prepare' || prepareRequested)
+									.map(([name, capability]) => {
+										discovered.add(name);
+										return { name, description: capability.description, input: capability.input };
+									})
+							})
+						}),
+						execute: tool({
+							description: 'Run a capability returned by search using its documented input.',
+							inputSchema: jsonSchema<{ name: string; input: Record<string, unknown> }>({
+								type: 'object',
+								properties: { name: { type: 'string' }, input: { type: 'object' } },
+								required: ['name', 'input'],
+								additionalProperties: false
+							}),
+							execute: async ({ name, input }) => {
+								if (awaitingFollowup) return { error: 'Waiting for the user.' };
+								if (!discovered.has(name) || !Object.hasOwn(capabilities, name)) {
+									return { error: 'Search for this capability before executing it.' };
+								}
+								if (name === 'reservations.prepare') {
+									if (!prepareRequested || !selectedSlot?.sourceUrl)
+										return { error: 'Select a time and choose Continue to checkout first.' };
+									const outcome = (await Sentry.startSpan(
+										{ name: 'capability.reservations.prepare', op: 'agent.tool' },
+										() => capabilities[name].run(selectedSlot as Record<string, unknown>)
+									)) as Record<string, unknown>;
+									if (
+										outcome.status !== 'checkout_ready' ||
+										typeof outcome.sessionId !== 'string' ||
+										typeof outcome.pageId !== 'string' ||
+										typeof outcome.expiresAt !== 'number'
+									)
+										return outcome;
+									const { sessionId, pageId, expiresAt, ...observation } = outcome;
+									const ticket = await new SignJWT({ sid: sessionId, pid: pageId })
+										.setProtectedHeader({ alg: 'HS256' })
+										.setSubject(userId)
+										.setExpirationTime(expiresAt)
+										.sign(new TextEncoder().encode(env.BETTER_AUTH_SECRET));
+									return { ...observation, viewPath: `/api/reservations/view?ticket=${ticket}` };
+								}
+								const outcome = await Sentry.startSpan(
+									{ name: `capability.${name}`, op: 'agent.tool' },
+									async () =>
+										capabilities[name].run(
+											input,
+											name === 'reservations.find' ? emitBrowserSession : undefined,
+											name === 'places.search' || name === 'reservations.find'
+												? {
+														preferredCuisines: diningContext.rankingCuisines
+													}
+												: undefined
+										)
+								);
+								if (name === 'followup' && (outcome as { kind?: string })?.kind === 'followup')
+									awaitingFollowup = true;
+								return outcome;
+							}
+						})
+					},
+					stopWhen: [
+						stepCountIs(7),
+						({ steps }) =>
+							steps
+								.at(-1)
+								?.toolResults.some(
+									(result) =>
+										result.toolName === 'execute' &&
+										typeof result.output === 'object' &&
+										result.output !== null &&
+										'kind' in result.output &&
+										result.output.kind === 'followup'
+								) ?? false
+					],
+					onLanguageModelCallStart: ({ callId }) => {
+						modelSpans.set(
+							callId,
+							Sentry.startInactiveSpan({ name: 'openrouter.generate', op: 'ai.model' })
+						);
+					},
+					onLanguageModelCallEnd: ({ callId, finishReason }) => {
+						const modelSpan = modelSpans.get(callId);
+						modelSpan?.setAttribute('ai.finish_reason', finishReason);
+						modelSpan?.end();
+						modelSpans.delete(callId);
+					},
+					onEnd: endTrace,
+					onAbort: endTrace,
+					onError: ({ error: streamError }) => {
+						span.setAttribute('outcome', 'error');
+						Sentry.withScope((scope) => {
+							scope.setTag(
+								'chat.error_type',
+								streamError instanceof Error ? streamError.name : 'unknown'
+							);
+							if (
+								typeof streamError === 'object' &&
+								streamError !== null &&
+								'statusCode' in streamError &&
+								typeof streamError.statusCode === 'number'
+							)
+								scope.setTag('chat.status_code', streamError.statusCode);
+							Sentry.captureMessage('Chat stream failed', 'warning');
+						});
+						endTrace();
+					}
+				});
+
+				return createUIMessageStreamResponse({
+					headers: { 'x-chat-thread': threadId, 'x-sentry-trace-id': span.spanContext().traceId },
+					consumeSseStream: async ({ stream }) => {
+						for await (const _chunk of stream) {
+							/* drain to persist after disconnect */
+						}
+					},
+					stream: createUIMessageStream({
+						originalMessages: conversation,
+						generateId: () => crypto.randomUUID(),
+						onEnd: async ({ responseMessage, outcome }) => {
+							await finishTurn(
+								threadId,
+								turn.token,
+								turn.position,
+								outcome.status === 'completed' ? responseMessage : undefined
+							);
+							if (turn.position === 3 && outcome.status === 'completed') {
+								try {
+									await Sentry.startSpan({ name: 'chat.title', op: 'ai.model' }, async () => {
+										const { text } = await generateText({
+											model: openrouter.responses(modelId),
+												system: titlePrompt.trim(),
+												prompt: incoming.parts
+													.filter((part) => part.type === 'text')
+													.map((part) => part.text)
+													.join('\n'),
+												maxOutputTokens: 128,
+												maxRetries: 0,
+												abortSignal: AbortSignal.timeout(8_000),
+												providerOptions: { openai: { reasoningEffort: 'low', store: false } }
+										});
+										await saveThreadTitle(threadId, userId, text);
+									});
+								} catch {
+									Sentry.captureMessage('Chat title generation failed; initial title retained', 'warning');
+								}
+							}
+						},
+						onError: publicStreamError,
+						execute({ writer }) {
+							emitBrowserSession = async ({ open, id, venue, pageId }) => {
+								if (!open) {
+									writer.write({ type: 'data-browser', data: { open, id }, transient: true });
+									return;
+								}
+								const ticket = await new SignJWT({ sid: id, pid: pageId, scope: 'preview' })
+									.setProtectedHeader({ alg: 'HS256' })
+									.setSubject(userId)
+									.setExpirationTime(Math.floor(Date.now() / 1_000) + 120)
+									.sign(new TextEncoder().encode(env.BETTER_AUTH_SECRET));
+								writer.write({
+									type: 'data-browser',
+									data: { open, id, venue, viewPath: `/api/reservations/view?ticket=${ticket}` },
+									transient: true
+								});
+							};
+							writer.merge(
+								result.toUIMessageStream({
+									onError: publicStreamError,
+									onEnd: ({ outcome }) => writer.setOutcome(outcome)
+								})
+							);
+						}
+					})
+				});
+			}
+		);
+	} catch (cause) {
+		await finishTurn(threadId, turn.token);
+		throw cause;
+	}
 };

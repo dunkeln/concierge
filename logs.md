@@ -325,3 +325,35 @@ Record a new entry only when a failure or limitation is observed and useful to r
 - Change: Reuse CalendarView with a progressive follow-up mode: month-only native input submits YYYY-MM without inventing a day, day selection submits one full date, and time selection keeps the known date fixed. Retain separate categorical choices. Validate date/time view compatibility and require a date for a time picker; update the existing prompt and spec to select depth from unknowns. Reservation-result browsing retains its existing controls.
 - Verification: Svelte check passed with zero errors/warnings. Extended the existing browser regression with streamed tool observations: month-only and day-only replies each submit once, time retains September 28/16:00 without tabs or a date input, and categorical choices and verified-time selection still pass. git diff --check passed.
 - Limit: Browser verification uses controlled streamed tool outputs, not a live-model conversation. The agent must still resolve ambiguous language and supply the correct enum and presets. No provider inspection, booking, or deployment.
+
+
+### 2026-09-27 — Live browser preview opened without a click
+
+- Symptom: The expanded browser popup appeared automatically when reservation inspection started; user requested explicit opening and assigned preview rendering regressions to another agent.
+- Cause: BrowserPreviewStack called open() on mount, so the first live-session event also opened a modal and moved focus.
+- Change: Remove only the mount-time open call. Keep the existing preview trigger, dismissal, focus restoration, session lifecycle, and rendering behavior.
+- Verification: A local browser check with a streamed session fixture stayed collapsed, opened after clicking the preview, then closed on Escape and restored trigger focus. This does not prove provider video rendering.
+- Limit: Blank previews and loader readiness remain with the other agent. No provider calls or deployment.
+
+### 2026-09-27 — Durable chat threads and editable preferences
+
+- Symptom: Refreshing the app discarded chat transcripts and selected context; completed onboarding preferences could not be edited. A first-message browser check also exposed a transcript reset when invalidation reloaded the original root URL after a shallow history update.
+- Cause: Chats lived only in the client SDK. There was no thread/message storage or history navigation. The first save needed a real navigation to its persisted thread URL rather than invalidation of the previously loaded root page.
+- Change: Add owner-scoped Neon chat tables, indexed paged history, atomic turn claims/completion, user-before-generation and assistant-after-completion writes, disconnect stream consumption, and a collapsible desktop/mobile chat sidebar. Load bounded model context from storage; keep explicit session selections in the thread and edit durable preferences through the existing onboarding form. Preserve timestamps and exclude reasoning, signed browser tickets, browser sessions, and frames from storage.
+- Verification: Applied the additive migration on a Neon verification branch, then the configured app database. Actual two-turn chat restored both speakers and remembered the earlier request. Actual composer/refresh/thread-switch/mobile-dismissal and unchanged-preference save roundtrip passed. Aborting the browser request still saved the assistant; a concurrent turn and a duplicate completed message were rejected. Missing threads and invalid cursors were rejected; unsigned requests followed the existing login boundary. Existing map, calendar/text, and streamed-preview browser regressions passed (3 tests); Svelte check passed with zero errors/warnings and production build passed. Runnable probes and screenshots are in ignored app/tests/local/.
+- Limit: Preexisting ephemeral conversations cannot be recovered. Model context is bounded to 19 recent messages; older transcript history remains accessible without summarization. Deployment and real reservation booking are separate gates. The additive migration assumes the existing auth/profile/passport tables.
+
+## 2026-09-27 — Shared chat sidebar
+
+- Symptom: Passport had no chat sidebar; history navigation belonged only to the home page.
+- Cause: The page owned the sidebar and explicitly excluded passport mode.
+- Fix: Move the sidebar, pagination, and thread-list load to the authenticated layout. Keep transcript state in the home page and guard navigation away from an active reply.
+- Verification: Local authenticated browser check passed passport/preferences visibility, reopening history, new chat, mobile dismissal/width, and anonymous login exclusion with no browser exceptions. Svelte check passed with zero errors/warnings. Runnable check: app/tests/local/sidebar-layout-check.mjs.
+
+## 2026-09-27 — Personal home invitation
+
+- Symptom: The empty home chat showed scene cards without a personal invitation.
+- Cause: Saved cuisine and outing preferences ordered cards and informed searches, but supplied no home greeting.
+- Change: Add one reactive line above the carousel using the account first name and up to two saved cuisines, with outing/general fallbacks. Hide it when chat begins; reuse loaded data with no extra generation or provider call.
+- Verification: Runnable app/tests/local/welcome-prompt-check.mjs passed saved/custom cuisine, duplicate, outing, missing-name, homepage, mobile text bounds, and saved-transcript checks with no browser exceptions. Svelte check passed with zero errors/warnings after concurrent preference edits resolved their icon type errors.
+- Remaining limit: This is a preference invitation, not retrieved venue recommendations. The mobile carousel still produced document overflow with this line hidden; the greeting did not alter its width.

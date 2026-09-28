@@ -9,31 +9,48 @@ import { passportVisit, userProfile } from '$lib/server/db/schema';
 import { scenarios } from '$lib/onboarding';
 import { and, desc, eq } from 'drizzle-orm';
 
+import { readThread, readMessages } from '$lib/server/chats';
+
 export const load: PageServerLoad = async ({ locals, url }) => {
-	const profile = locals.user
-		? await db.query.userProfile.findFirst({
-				where: eq(userProfile.userId, locals.user.id),
-				columns: { atmospheres: true }
-			})
-		: null;
-	const google = locals.user
-		? await db.query.account.findMany({
-				where: and(eq(account.userId, locals.user.id), eq(account.providerId, 'google')),
-				columns: { scope: true }
-			})
-		: [];
-	const visits =
+	const threadId = url.searchParams.get('chat');
+	const [profile, google, visits, thread] = await Promise.all([
+		locals.user
+			? db.query.userProfile.findFirst({
+					where: eq(userProfile.userId, locals.user.id),
+					columns: { atmospheres: true, cuisines: true }
+				})
+			: null,
+		locals.user
+			? db.query.account.findMany({
+					where: and(eq(account.userId, locals.user.id), eq(account.providerId, 'google')),
+					columns: { scope: true }
+				})
+			: [],
 		locals.user && url.searchParams.has('passport')
-			? await db.query.passportVisit.findMany({
+			? db.query.passportVisit.findMany({
 					where: eq(passportVisit.userId, locals.user.id),
 					orderBy: [desc(passportVisit.visitedOn), desc(passportVisit.createdAt)],
 					columns: { id: true, place: true, visitedOn: true, scene: true }
 				})
-			: [];
+			: [],
+		locals.user && threadId ? readThread(threadId, locals.user.id) : null
+	]);
+	const rows = thread ? await readMessages(thread.id) : [];
 	return {
+		thread: thread
+			? {
+					id: thread.id,
+					pending: Boolean(thread.busyUntil && thread.busyUntil > new Date()),
+					context: thread.context,
+					messages: rows.map((row) => row.message),
+					oldestPosition: rows[0]?.position ?? null,
+					hasOlder: rows.length === 100
+				}
+			: null,
 		chatConfigured: Boolean(env.OPENROUTER_API_KEY),
 		geoapifyMapKey: env.GEOAPIFY_API_KEY || null,
 		atmospheres: profile?.atmospheres ?? [],
+		profile: profile ?? null,
 		googleEnabled,
 		calendarConnected: google.some(({ scope }) => hasCalendarScopes(scope)),
 		visits

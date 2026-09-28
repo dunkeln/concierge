@@ -2,16 +2,17 @@ import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { db } from '$lib/server/db';
 import { userProfile } from '$lib/server/db/schema';
-import { atmospheres, cuisines, travelMinutes } from '$lib/onboarding';
+import { scenarios, cuisines, travelMinutes } from '$lib/onboarding';
 import { eq } from 'drizzle-orm';
 
-export const load: PageServerLoad = async ({ locals }) => {
+export const load: PageServerLoad = async ({ locals, url }) => {
 	if (!locals.user) redirect(303, '/login');
 	const profile = await db.query.userProfile.findFirst({
 		where: eq(userProfile.userId, locals.user.id),
-		columns: { userId: true }
+		columns: { cuisines: true, atmospheres: true, travelMinutes: true }
 	});
-	if (profile) redirect(303, '/');
+	if (profile && !url.searchParams.has('edit')) redirect(303, '/');
+	return { profile: profile ?? null };
 };
 
 export const actions: Actions = {
@@ -26,7 +27,7 @@ export const actions: Actions = {
 			chosenAtmospheres.length < 1 ||
 			chosenAtmospheres.length > 2 ||
 			chosenAtmospheres.some(
-				(value) => !atmospheres.includes(value as (typeof atmospheres)[number])
+				(value) => !scenarios.some((scenario) => scenario.atmosphere === value)
 			) ||
 			!travelMinutes.includes(travel as (typeof travelMinutes)[number])
 		) {
@@ -51,7 +52,10 @@ export const actions: Actions = {
 				travelMinutes: travel,
 				onboardedAt: new Date()
 			})
-			.onConflictDoNothing();
+			.onConflictDoUpdate({
+				target: userProfile.userId,
+				set: { cuisines: chosenCuisines, atmospheres: chosenAtmospheres, travelMinutes: travel }
+			});
 
 		redirect(303, '/');
 	}

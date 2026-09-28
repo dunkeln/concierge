@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { beforeNavigate, goto, invalidateAll, replaceState } from '$app/navigation';
+	import { untrack } from 'svelte';
 	import { page } from '$app/state';
 	import { Chat } from '@ai-sdk/svelte';
 	import { DefaultChatTransport } from 'ai';
@@ -18,6 +20,15 @@
 	let { data, form }: PageProps = $props();
 	let passportOpen = $derived(page.url.searchParams.has('passport'));
 	let input = $state('');
+	const initialThread = untrack(() => data.thread);
+	let threadId = $state(initialThread?.id ?? '');
+	let loadedThreadId: string | null = initialThread?.id ?? null;
+	let loadedLastMessageId = initialThread?.messages.at(-1)?.id;
+	let oldestPosition = $state(untrack(() => data.thread?.oldestPosition ?? null));
+	let hasOlder = $state(untrack(() => data.thread?.hasOlder ?? false));
+	let loadingOlder = $state(false);
+	let persistedResponse = false;
+	let historyFailure = $state<string | null>(null);
 	const sceneTitles: Record<(typeof scenarios)[number]['atmosphere'], string> = {
 		Quiet: 'Catch up',
 		Lively: 'Celebrate',
@@ -36,10 +47,25 @@
 		Brunch: '/editorial/brunch-table.png',
 		Coffee: '/editorial/coffee-bar.png'
 	};
-	let sceneCards = $derived([
-		...scenarios.filter(({ atmosphere }) => data.atmospheres.includes(atmosphere)),
-		...scenarios.toReversed().filter(({ atmosphere }) => !data.atmospheres.includes(atmosphere))
-	]);
+	let sceneCards = $derived.by(() => {
+		const preferred = scenarios.filter(({ atmosphere }) =>
+			data.profile?.atmospheres.includes(atmosphere)
+		);
+		return [
+			...preferred,
+			...scenarios.toReversed().filter((scene) => !preferred.includes(scene))
+		].slice(0, 5);
+	});
+	let welcomePrompt = $derived.by(() => {
+		const firstName = data.user?.name?.trim().split(/\s+/)[0];
+		const greeting = firstName ? `Hey ${firstName}` : 'Hey';
+		const favorites = [...new Set(data.profile?.cuisines ?? [])].slice(0, 2);
+		if (favorites.length) return `${greeting}, in the mood for ${favorites.join(' or ')}?`;
+		const outing = sceneCards[0];
+		return data.profile?.atmospheres.length && outing
+			? `${greeting}, how about ${outing.title.charAt(0).toLowerCase() + outing.title.slice(1)}?`
+			: `${greeting}, coffee, a catch-up, or somewhere new?`;
+	});
 	let messageField = $state<HTMLTextAreaElement>();
 	type LinkPreview = {
 		href: string;
@@ -121,10 +147,14 @@
 			return;
 		hideLinkPreview();
 	}
-	let selectedPlace = $state<{ id: string; name: string; area: string } | null>(null);
+	let selectedPlace = $state<{ id: string; name: string; area: string } | null>(
+		(initialThread?.context.selectedPlace as { id: string; name: string; area: string }) ?? null
+	);
 	let selectedCuisine = $state<string | null>(null);
-	let sessionCuisine = $state<string | null>(null);
-	let selectedDate = $state<string | null>(null);
+	let sessionCuisine = $state<string | null>(
+		(initialThread?.context.preferredCuisine as string) ?? null
+	);
+	let selectedDate = $state<string | null>((initialThread?.context.selectedDate as string) ?? null);
 	let pendingReplyMessageId = $state<string | null>(null);
 	let selectedSlot = $state<{
 		venue: string;
@@ -133,7 +163,16 @@
 		time: string;
 		experience?: string;
 		sourceUrl?: string;
-	} | null>(null);
+	} | null>(
+		(initialThread?.context.selectedSlot as {
+			venue: string;
+			date: string;
+			partySize: number;
+			time: string;
+			experience?: string;
+			sourceUrl?: string;
+		}) ?? null
+	);
 	type BrowserSession = {
 		id: string;
 		venue: string;
@@ -152,6 +191,11 @@
 			return { message: 'This chat is still too long. Start a new chat.', retry: false };
 		if (status === 400)
 			return { message: 'This chat could not be sent. Start a new chat.', retry: false };
+		if (status === 409)
+			return {
+				message: 'This chat is still responding in another tab. Try again shortly.',
+				retry: true
+			};
 		if (status === 429) return { message: 'Too many requests. Try again shortly.', retry: true };
 		if (status === 503)
 			return { message: 'Chat service is unavailable. Try again later.', retry: true };
@@ -168,6 +212,16 @@
 		return { message: 'The connection or response failed. Please retry.', retry: true };
 	});
 	const chat = new Chat({
+		messages: untrack(() => data.thread?.messages ?? []),
+		onFinish: () => {
+			if (persistedResponse && page.url.pathname === '/' && !passportOpen)
+				void goto(`/?chat=${threadId}`, {
+					replaceState: true,
+					invalidateAll: true,
+					keepFocus: true,
+					noScroll: true
+				});
+		},
 		onData: (part) => {
 			if (part.type !== 'data-browser') return;
 			if (!part.data || typeof part.data !== 'object') return;
@@ -195,66 +249,33 @@
 		transport: new DefaultChatTransport({
 			fetch: async (input, init) => {
 				const response = await fetch(input, init);
-				if (response.status !== 413 || typeof init?.body !== 'string') return response;
-				const body = JSON.parse(init.body) as {
-					messages: Array<{ role: string; parts: Array<Record<string, unknown>> }>;
-				};
-				const messages = body.messages.slice(-5).map((message) => ({
-					...message,
-					parts:
-						message.role === 'assistant'
-							? message.parts.flatMap((part) => {
-									if (part.type === 'text') return [part];
-									const output = part.output as { kind?: unknown; question?: unknown } | undefined;
-									return output?.kind === 'followup' && typeof output.question === 'string'
-										? [{ type: 'text', text: output.question }]
-										: [];
-								})
-							: message.parts
-				}));
-				await response.body?.cancel();
-				return fetch(input, { ...init, body: JSON.stringify({ ...body, messages }) });
+				persistedResponse = response.ok && response.headers.get('x-chat-thread') === threadId;
+				return response;
 			},
-			prepareSendMessagesRequest: ({ messages }) => ({
-				body: {
-					messages: messages.slice(-19).map((message, index) => ({
-						...message,
-						parts:
-							message.role === 'assistant'
-								? message.parts.flatMap<(typeof message.parts)[number]>((part) => {
-										if (part.type === 'text') return [part];
-										if (part.type !== 'tool-execute' || part.state !== 'output-available')
-											return [];
-										const output = part.output as Record<string, unknown> | null;
-										if (output?.kind === 'followup') return [part];
-										if (index < Math.min(messages.length, 19) - 6) return [];
-										return [
-											{
-												...part,
-												output: {
-													...output,
-													...(Array.isArray(output?.places)
-														? { places: output.places.slice(0, 25) }
-														: {})
-												}
-											}
-										];
-									})
-								: message.parts
-					})),
-					selectedPlace: $state.snapshot(selectedPlace),
-					preferredCuisine: sessionCuisine,
-					selectedDate,
-					selectedSlot: $state.snapshot(selectedSlot)
+			prepareSendMessagesRequest: ({ messages }) => {
+				if (!threadId) {
+					threadId = crypto.randomUUID();
+					loadedThreadId = threadId;
+					replaceState(`/?chat=${threadId}`, {});
 				}
-			})
+				return {
+					body: {
+						threadId,
+						messages: [messages.filter((message) => message.role === 'user').at(-1)],
+						selectedPlace: $state.snapshot(selectedPlace),
+						preferredCuisine: sessionCuisine,
+						selectedDate,
+						selectedSlot: $state.snapshot(selectedSlot)
+					}
+				};
+			}
 		})
 	});
 
 	function send(event: SubmitEvent) {
 		event.preventDefault();
 		const text = input.trim();
-		if (!text || !data.chatConfigured || chat.status !== 'ready') return;
+		if (!text || !data.chatConfigured || chat.status !== 'ready' || data.thread?.pending) return;
 		input = '';
 		const current = chat.messages.at(-1);
 		if (current?.role === 'assistant' && followupFor(current)) void replyTo(current.id, text);
@@ -263,7 +284,14 @@
 
 	async function replyTo(messageId: string, text: string) {
 		const reply = text.trim();
-		if (!reply || !data.chatConfigured || chat.status !== 'ready' || pendingReplyMessageId) return;
+		if (
+			!reply ||
+			!data.chatConfigured ||
+			chat.status !== 'ready' ||
+			data.thread?.pending ||
+			pendingReplyMessageId
+		)
+			return;
 		pendingReplyMessageId = messageId;
 		try {
 			await chat.sendMessage({ text: reply });
@@ -274,7 +302,77 @@
 		}
 	}
 
+	$effect(() => {
+		const saved = data.thread;
+		untrack(() => {
+			const id = saved?.id ?? null;
+			if (
+				(id === loadedThreadId && saved?.messages.at(-1)?.id === loadedLastMessageId) ||
+				chat.status === 'submitted' ||
+				chat.status === 'streaming'
+			)
+				return;
+			if (id === loadedThreadId && saved?.messages.at(-1)?.id === chat.messages.at(-1)?.id) {
+				loadedLastMessageId = saved?.messages.at(-1)?.id;
+				return;
+			}
+			loadedThreadId = id;
+			loadedLastMessageId = saved?.messages.at(-1)?.id;
+			threadId = id ?? '';
+			chat.messages = saved?.messages ?? [];
+			chat.clearError();
+			input = '';
+			browserSessions = [];
+			pendingReplyMessageId = null;
+			const context = saved?.context ?? {};
+			selectedPlace = (context.selectedPlace as typeof selectedPlace) ?? null;
+			sessionCuisine = (context.preferredCuisine as string) ?? null;
+			selectedDate = (context.selectedDate as string) ?? null;
+			selectedSlot = (context.selectedSlot as typeof selectedSlot) ?? null;
+			selectedCuisine = null;
+			oldestPosition = saved?.oldestPosition ?? null;
+			hasOlder = saved?.hasOlder ?? false;
+		});
+	});
+
+	$effect(() => {
+		if (!data.thread?.pending || chat.status === 'streaming' || chat.status === 'submitted') return;
+		const timer = setTimeout(() => void invalidateAll(), 3_000);
+		return () => clearTimeout(timer);
+	});
+
+	beforeNavigate(({ to, cancel }) => {
+		if (
+			(chat.status === 'submitted' || chat.status === 'streaming') &&
+			to?.url.pathname === '/' &&
+			to.url.searchParams.get('chat') !== threadId
+		)
+			cancel();
+	});
+
+	async function loadOlder() {
+		if (!threadId || !oldestPosition || loadingOlder) return;
+		loadingOlder = true;
+		historyFailure = null;
+		try {
+			const response = await fetch(`/api/chats/${threadId}?before=${oldestPosition}`);
+			if (!response.ok) throw new Error('Could not load earlier messages.');
+			const saved = await response.json();
+			chat.messages = [...saved.messages, ...chat.messages];
+			oldestPosition = saved.oldestPosition;
+			hasOlder = saved.hasOlder;
+		} catch {
+			historyFailure = 'Could not load earlier messages. Try again.';
+		} finally {
+			loadingOlder = false;
+		}
+	}
+
 	function newChat() {
+		threadId = '';
+		loadedThreadId = null;
+		hasOlder = false;
+		void goto('/');
 		chat.messages = [];
 		chat.clearError();
 		input = '';
@@ -448,7 +546,9 @@
 
 <svelte:head><title>Concierge</title></svelte:head>
 
-<main class="flex min-h-0 w-full flex-1 flex-col pb-6">
+<main
+	class="flex min-h-0 w-full flex-1 flex-col pb-6 transition-[padding] motion-reduce:transition-none"
+>
 	<div class="mx-auto flex min-h-0 w-full max-w-2xl flex-1 flex-col">
 		{#if !passportOpen && chat.messages.length}
 			<button
@@ -463,9 +563,16 @@
 			aria-live="polite"
 			onscroll={hideLinkPreview}
 		>
+			{#if historyFailure}<p class="text-sm text-destructive" role="alert">{historyFailure}</p>{/if}
 			{#if passportOpen}
 				<PassportLedger visits={data.visits} atmospheres={data.atmospheres} error={form?.message} />
 			{:else}
+				{#if hasOlder}<button
+						type="button"
+						class="self-center text-xs underline disabled:opacity-50"
+						disabled={loadingOlder || chat.status !== 'ready' || data.thread?.pending}
+						onclick={() => void loadOlder()}>Earlier messages</button
+					>{/if}
 				{#each chat.messages as message (message.id)}
 					{@const searches = placeSearches(message)}
 					{@const inspections = reservationInspections(message)}
@@ -511,6 +618,7 @@
 									googleEnabled={data.googleEnabled}
 									disabled={!data.chatConfigured ||
 										chat.status !== 'ready' ||
+										data.thread?.pending ||
 										pendingReplyMessageId !== null ||
 										chat.messages.at(-1)?.id !== message.id}
 									onReply={(answer) => void replyTo(message.id, answer)}
@@ -544,6 +652,7 @@
 										calendarConnected={data.calendarConnected}
 										disabled={!data.chatConfigured ||
 											chat.status !== 'ready' ||
+											data.thread?.pending ||
 											chat.messages.at(-1)?.id !== message.id}
 										selectedTime={selectedSlot?.date === inspection.date &&
 										selectedSlot.venue === inspection.venue
@@ -553,6 +662,7 @@
 										onSelectDate={(date) => {
 											if (
 												chat.status !== 'ready' ||
+												data.thread?.pending ||
 												pendingReplyMessageId ||
 												chat.messages.at(-1)?.id !== message.id
 											)
@@ -567,6 +677,7 @@
 										onSelectTime={(time, experience) => {
 											if (
 												chat.status !== 'ready' ||
+												data.thread?.pending ||
 												pendingReplyMessageId ||
 												chat.messages.at(-1)?.id !== message.id
 											)
@@ -613,6 +724,7 @@
 					</Message.Root>
 				{:else}
 					<div class="my-auto w-full space-y-5">
+						<p class="mx-auto max-w-2xl text-base text-primary-foreground/80">{welcomePrompt}</p>
 						<div class="scene-rail mx-auto flex w-full max-w-2xl snap-x gap-4 overflow-x-auto pb-2">
 							{#each sceneCards as scene (scene.atmosphere)}
 								<button
@@ -652,8 +764,15 @@
 				{#if browserSessions.some((session) => session.open)}
 					<BrowserPreviewStack sessions={browserSessions.filter((session) => session.open)} />
 				{/if}
-				{#if chat.status === 'submitted'}
+				{#if chat.status === 'submitted' || data.thread?.pending}
 					<p class="text-sm text-primary-foreground/55" role="status">Thinking…</p>
+				{/if}
+				{#if chat.status === 'ready' && !data.thread?.pending && data.thread && chat.messages.at(-1)?.role === 'user'}
+					<button
+						type="button"
+						class="self-start text-sm underline"
+						onclick={() => void chat.regenerate()}>Continue response</button
+					>
 				{/if}
 				{#if chatFailure}
 					<div class="flex items-center gap-3 text-sm text-destructive" role="alert">
@@ -752,7 +871,7 @@
 					<button
 						type="button"
 						class="mb-2 self-end rounded-lg border border-primary-foreground/25 px-3 py-1.5 text-xs hover:bg-primary-foreground/10 disabled:opacity-50"
-						disabled={chat.status !== 'ready'}
+						disabled={chat.status !== 'ready' || data.thread?.pending}
 						onclick={() =>
 							void chat.sendMessage({
 								text: 'Continue my selected time to checkout. Stop before entering guest or payment details or submitting.'
@@ -784,7 +903,10 @@
 					type="submit"
 					aria-label="Send message"
 					class="flex size-11 shrink-0 items-center justify-center rounded-xl text-primary-foreground transition-colors hover:bg-primary-foreground/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-foreground active:bg-primary-foreground/15 disabled:text-primary-foreground/35 disabled:hover:bg-transparent"
-					disabled={!data.chatConfigured || !input.trim() || chat.status !== 'ready'}
+					disabled={!data.chatConfigured ||
+						!input.trim() ||
+						chat.status !== 'ready' ||
+						data.thread?.pending}
 				>
 					<SFIcon icon="arrow-up" size="md" weight="semibold" />
 				</button>

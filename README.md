@@ -1,47 +1,46 @@
-<div align="center">concierge</div>
+# Concierge
 
-Restaurant reservation agent take-home, in progress.
+A conversational concierge for finding places and exploring reservations.
 
-Live app: https://concierge-pearl.vercel.app
-
-The app provides account creation, login, onboarding, and an authenticated chat. Reservation page inspection is read-only; the app does not claim to book tables.
+[Open the app](https://concierge-pearl.vercel.app)
 
 ## Architecture
 
-- SvelteKit handles the UI, form actions, and session checks.
-- Better Auth stores users and sessions in a dedicated Neon Postgres project.
-- Drizzle defines the authentication and onboarding schema in `app/src/lib/server/db/`.
-- Vercel builds `app/` from pushes to the GitHub `mucho` branch. The browser never receives database credentials.
-- Geoapify discovers restaurants and cafés. Browserbase Search finds public reservation pages when no prior booking link is available. One Stagehand browser loop follows booking controls across providers, verifies venue/date/party, and reads visible times through the Browserbase model gateway. OpenRouter powers the Concierge chat.
-- Google Calendar access is optional and separate from sign-in. Better Auth links a Google account with free/busy and calendar-list read-only scopes; the server returns busy intervals to the reservation widget, without event details or calendar data in the model context.
+```mermaid
+flowchart LR
+    UI["Frontend<br/>Chat · maps · calendar · passport"]
 
-## Run locally
+    subgraph Backend
+        Auth["Auth<br/>Session checks · /api/auth/*"]
+        Chat["POST /api/chat<br/>Validate context · stream responses"]
+        Agent["Agent<br/>Prompt + preferences · model · tool loop"]
+        Tools["Tools<br/>Place search · reservation inspection<br/>Checkout handoff · follow-up questions"]
+        Busy["GET /api/calendar/busy<br/>Read schedule conflicts"]
+        Preview["GET /api/reservations/view<br/>Authorize browser preview / checkout"]
+        Links["GET /api/link-preview<br/>Read page metadata"]
+        Profile["Page loads + form actions<br/>Preferences · passport entries"]
+    end
 
-```sh
-cd app
-bun install
-cp .env.example .env
-# Set DATABASE_URL and BETTER_AUTH_SECRET in .env
-bun run db:push
-bun run dev
+    Store[("Store<br/>Accounts · sessions · preferences · passport")]
+    Places["Place endpoints<br/>Geocoding · nearby venues"]
+    Browser["Browser endpoints<br/>Page discovery · inspection · checkout"]
+    Calendar["Calendar endpoints<br/>Calendar list · free/busy"]
+    Metadata["Metadata endpoint<br/>Title · description · image"]
+
+    UI --> Auth
+    Auth --> Store
+    UI --> Chat & Busy & Preview & Links & Profile
+    Chat --> Agent
+    Store -->|Preferences| Agent
+    Agent --> Tools
+    Tools --> Places & Browser
+    Busy --> Calendar
+    Preview --> Browser
+    Links --> Metadata
+    Profile --> Store
 ```
 
-For calendar conflicts, enable Google Calendar API on the existing Google OAuth project and add `calendar.freebusy` and `calendar.calendarlist.readonly` to its consent screen. Add your Google account as a test user if the consent screen is in testing mode. Sign in to Concierge, choose **Connect Google Calendar**, then search for a reservation. The comparison assumes the restaurant shares the device timezone and a two-hour meal; it does not create events.
+## Reservation services
 
-## Local checks
-
-In another terminal, run `bun run test:auth`, sign in with your own local account, complete onboarding if prompted, then stop the recorder with Ctrl+C. This saves a git-ignored Playwright session. Run `bun run test:e2e` to check the chat calendar and selected-slot payload with a mocked chat response. No reservation provider is called.
-
-Run `bun run eval:local` in `app/` to score the frozen, redacted Sentry observations in `app/tests/sentry-snapshots.json` without calling the agent, model, or provider. Run `bun run eval:braintrust` to record those same observed scores in the dedicated Concierge Braintrust project. Braintrust code lives in `app/tests/`, outside the app runtime. A score is null when the capture lacks the provider evidence needed to judge that claim.
-
-For a human-triggered development review, pick a `POST /api/chat` trace in the Concierge Sentry project. Read the `chat.intake`, `gen_ai.generate_content`, and `gen_ai.execute_tool` spans, plus the AI conversation transcript. Append only the relevant observed request, calls, outcome, and answer to `app/tests/sentry-snapshots.json`, with its trace URL and without user details or secrets. Use empty `expected` for a turn without a selected slot. Set `providerOutcome` only from independent provider evidence; use `null` when it is absent. Then score those fixed observations. Sentry remains the evidence source; no automatic trace forwarding is configured.
-
-`app/tests/snapshots.md` records qualitative journeys. Compare scores only across observed captures with the same applicable checks; an inapplicable check remains unscored.
-
-## Scope and cuts
-
-Browser inspection follows the conversation's venue and prior booking link, with a provider constraint only when requested. Local checks inspected Izakaya Ginji on OpenTable and Ai Fiori on SevenRooms; the local chat rendered checked OpenTable times after one retry. The shared handoff reached OpenTable guest-details/review and stopped without entering details, payment, or submitting a booking. [The earlier SevenRooms manual screenshot](proof/README.md) remains separate historical evidence.
-
-Inspection is bounded to two discovered pages and 12 search-control actions per page within a shared 110-second budget. A prior link is inspected first and can follow its booking destination. Dynamic widgets, provider blocks, and ambiguous filters can still fail; those failures do not establish unavailability. These checks do not prove universal provider support, complete inventory, or a completed booking.
-
-AI tools used: Codex for code migration, implementation, review, and runtime checks; Svelte MCP for framework documentation and component diagnostics; iOS design skills for mobile layout and interaction guidance.
+- [OpenTable](https://www.opentable.com/)
+- [SevenRooms](https://sevenrooms.com/)

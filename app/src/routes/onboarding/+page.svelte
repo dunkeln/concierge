@@ -18,7 +18,9 @@
 				</Avatar.Fallback>
 			</Avatar.Root>
 			<div>
-				<p class="text-xs tracking-[0.3em] text-primary-foreground/55 uppercase">Your first page</p>
+				<p class="text-xs tracking-[0.3em] text-primary-foreground/55 uppercase">
+					{data.profile ? 'Your preferences' : 'Your first page'}
+				</p>
 			</div>
 		</div>
 		<h1 class="mt-5 max-w-2xl text-[clamp(2.5rem,7vw,5rem)] leading-[1.02] tracking-tight">
@@ -43,6 +45,7 @@
 								type="checkbox"
 								name="atmosphere"
 								value={scenario.atmosphere}
+								checked={data.profile?.atmospheres.includes(scenario.atmosphere) ?? false}
 							/>
 							<span
 								class="flex min-h-28 cursor-pointer flex-col justify-center rounded-2xl border border-primary-foreground/25 px-5 py-4 transition-colors peer-checked:border-primary-foreground peer-checked:bg-primary-foreground/12 peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-primary-foreground hover:border-primary-foreground/60"
@@ -64,7 +67,13 @@
 				<div class="flex flex-wrap gap-2">
 					{#each cuisines as cuisine (cuisine)}
 						<label>
-							<input class="peer sr-only" type="checkbox" name="cuisine" value={cuisine} />
+							<input
+								class="peer sr-only"
+								type="checkbox"
+								name="cuisine"
+								value={cuisine}
+								checked={data.profile?.cuisines.includes(cuisine) ?? false}
+							/>
 							<span
 								class="inline-flex min-h-11 cursor-pointer items-center rounded-lg border border-primary-foreground/30 px-4 text-sm transition-colors peer-checked:bg-primary-foreground peer-checked:text-primary peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-primary-foreground hover:border-primary-foreground/70"
 								>{cuisine}</span
@@ -84,7 +93,7 @@
 								type="radio"
 								name="travelMinutes"
 								value={minutes}
-								checked={minutes === 30}
+								checked={minutes === (data.profile?.travelMinutes ?? 30)}
 							/>
 							<span
 								class="inline-flex min-h-11 cursor-pointer items-center rounded-lg border border-primary-foreground/30 px-4 text-sm transition-colors peer-checked:bg-primary-foreground peer-checked:text-primary peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-primary-foreground hover:border-primary-foreground/70"
@@ -98,7 +107,7 @@
 			{#if form?.message}<p role="alert" class="text-sm text-red-400">{form.message}</p>{/if}
 			<button
 				class="min-h-12 rounded-lg bg-primary-foreground px-6 font-medium text-primary transition-transform active:scale-95"
-				>Continue <span aria-hidden="true">→</span></button
+				>{data.profile ? 'Save preferences' : 'Continue'} <span aria-hidden="true">→</span></button
 			>
 		</form>
 	</div>

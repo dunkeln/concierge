@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, tick } from 'svelte';
+	import { tick } from 'svelte';
 
 	type Session = {
 		id: string;
@@ -25,10 +25,6 @@
 		await tick();
 		trigger?.focus();
 	}
-
-	onMount(() => {
-		void open();
-	});
 </script>
 
 <svelte:window onkeydown={(event) => event.key === 'Escape' && expanded && dismiss()} />

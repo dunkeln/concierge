@@ -5,12 +5,16 @@ import { userProfile } from '$lib/server/db/schema';
 
 export async function loadDiningContext(userId: string, sessionCuisine: string | null | undefined) {
 	let remembered: string[] = [];
+	let plans: string[] = [];
+	let travel: number | undefined;
 	try {
 		const profile = await db.query.userProfile.findFirst({
 			where: eq(userProfile.userId, userId),
-			columns: { cuisines: true }
+			columns: { cuisines: true, atmospheres: true, travelMinutes: true }
 		});
 		remembered = profile?.cuisines.slice(0, 5) ?? [];
+		plans = profile?.atmospheres ?? [];
+		travel = profile?.travelMinutes;
 	} catch {
 		Sentry.captureMessage('Dining profile unavailable; using chat preference only', 'warning');
 	}
@@ -19,7 +23,11 @@ export async function loadDiningContext(userId: string, sessionCuisine: string |
 	];
 	const context = [
 		sessionCuisine ? `Chosen for this chat: ${sessionCuisine}.` : '',
-		remembered.length ? `Saved cuisine preferences: ${remembered.join(', ')}.` : ''
+		remembered.length ? `Saved cuisine preferences: ${remembered.join(', ')}.` : '',
+		plans.length ? `Saved outing preferences: ${plans.join(', ')}.` : '',
+		travel
+			? `Preferred travel limit: ${travel} minutes; verify actual journey time before claiming a fit.`
+			: ''
 	]
 		.filter(Boolean)
 		.join(' ');

@@ -1,4 +1,13 @@
-import { pgTable, integer, text, timestamp, date, index } from 'drizzle-orm/pg-core';
+import {
+	pgTable,
+	integer,
+	text,
+	timestamp,
+	date,
+	index,
+	jsonb,
+	primaryKey
+} from 'drizzle-orm/pg-core';
 import { user } from './auth.schema';
 
 export const userProfile = pgTable('user_profile', {
@@ -26,6 +35,41 @@ export const passportVisit = pgTable(
 		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
 	},
 	(table) => [index('passport_visit_user_date_idx').on(table.userId, table.visitedOn)]
+);
+
+export const chatThread = pgTable(
+	'chat_thread',
+	{
+		id: text('id').primaryKey(),
+		userId: text('user_id')
+			.notNull()
+			.references(() => user.id, { onDelete: 'cascade' }),
+		title: text('title').notNull(),
+		context: jsonb('context').$type<Record<string, unknown>>().notNull().default({}),
+		revision: integer('revision').notNull().default(0),
+		turnToken: text('turn_token'),
+		busyUntil: timestamp('busy_until', { withTimezone: true }),
+		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull()
+	},
+	(table) => [index('chat_thread_user_updated_idx').on(table.userId, table.updatedAt)]
+);
+
+export const chatMessage = pgTable(
+	'chat_message',
+	{
+		threadId: text('thread_id')
+			.notNull()
+			.references(() => chatThread.id, { onDelete: 'cascade' }),
+		id: text('id').notNull(),
+		position: integer('position').notNull(),
+		message: jsonb('message').$type<import('ai').UIMessage>().notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+	},
+	(table) => [
+		primaryKey({ columns: [table.threadId, table.id] }),
+		index('chat_message_thread_position_idx').on(table.threadId, table.position)
+	]
 );
 
 export * from './auth.schema';
