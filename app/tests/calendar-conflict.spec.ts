@@ -12,8 +12,12 @@ test('marks only overlapping reservation windows as conflicts', () => {
 	expect(conflictsWithCalendar('2026-09-28', '4:00 PM', busy)).toBe(false);
 });
 
-test('requests calendar scopes separately from sign-in', async ({ request }) => {
-	const response = await request.post('/?/connectCalendar', { form: {}, maxRedirects: 0 });
+test('requests calendar scopes separately from sign-in', async ({ request, baseURL }) => {
+	const response = await request.post('/?/connectCalendar', {
+		form: {},
+		maxRedirects: 0,
+		headers: { Origin: baseURL! }
+	});
 	expect(response.status()).toBe(200);
 	const result: { type: string; location?: string } = await response.json();
 	expect(result.type).toBe('redirect');

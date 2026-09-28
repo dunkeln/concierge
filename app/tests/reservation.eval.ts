@@ -7,6 +7,7 @@ type Observation = {
 	calls: Call[];
 	browserSearchUsed?: boolean;
 	providerOutcome: 'checkout_ready' | 'failed' | null;
+	inspectedVenues?: { name: string; categories: string[]; date: string; partySize: number }[];
 };
 type Snapshot = {
 	input: { request: string; observation: Observation };
@@ -16,12 +17,13 @@ type Snapshot = {
 		date?: string;
 		partySize?: number;
 		time?: string;
+		cuisines?: string[];
 	};
 	metadata: { source: string; capturedAt: string };
 };
 
 const snapshots: Snapshot[] = JSON.parse(
-	readFileSync(new URL('./sentry-snapshots.json', import.meta.url), 'utf8')
+	readFileSync(new URL('./local/sentry-snapshots.json', import.meta.url), 'utf8')
 );
 if (!Array.isArray(snapshots) || !snapshots.length)
 	throw new Error('No Sentry snapshots to score.');
@@ -32,6 +34,51 @@ Eval('Concierge', {
 	// The task returns the captured answer and tool calls. It never invokes the app, model, or provider.
 	task: ({ observation }) => observation,
 	scores: [
+		function cuisinePassedToSearch({ output, expected }) {
+			if (!expected.cuisines) return null;
+			const searches = output.calls.filter(
+				(call) => call.name === 'reservations.find' || call.name === 'places.search'
+			);
+			if (!searches.length) return 0;
+			return Number(
+				searches.every((call) =>
+					expected.cuisines!.some((cuisine) =>
+						String(call.input?.cuisine ?? '')
+							.toLowerCase()
+							.includes(cuisine.toLowerCase())
+					)
+				)
+			);
+		},
+		function inspectedVenueFitsRequest({ output, expected }) {
+			if (!expected.cuisines || !output.inspectedVenues) return null;
+			return Number(
+				output.inspectedVenues.length > 0 &&
+					output.inspectedVenues.every((venue) =>
+						venue.categories.some((category) =>
+							expected.cuisines!.some(
+								(cuisine) => category.split('.').at(-1)?.toLowerCase() === cuisine.toLowerCase()
+							)
+						)
+					)
+			);
+		},
+		function namedVenueBeforeInspection({ output }) {
+			if (!output.inspectedVenues?.length) return null;
+			return Number(
+				output.inspectedVenues.every((venue) =>
+					output.calls.some(
+						(call) =>
+							call.name === 'reservations.find' &&
+							String(call.input?.restaurant ?? '')
+								.trim()
+								.toLowerCase() === venue.name.toLowerCase() &&
+							call.input?.date === venue.date &&
+							call.input?.partySize === venue.partySize
+					)
+				)
+			);
+		},
 		function searchedBeforeExecution({ output }) {
 			const firstSearch = output.calls.findIndex((call) => call.tool === 'search');
 			const firstExecute = output.calls.findIndex((call) => call.tool === 'execute');

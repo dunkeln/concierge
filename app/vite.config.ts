@@ -26,6 +26,7 @@ export default defineConfig({
 			typescript: {
 				config: (config) => {
 					config.include.push('../drizzle.config.ts');
+					config.exclude.push('../tests/local/**');
 				}
 			}
 		})

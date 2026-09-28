@@ -1,5 +1,31 @@
 export const atmospheres = ['Quiet', 'Lively', 'Intimate', 'Casual', 'Adventurous'] as const;
-export const cuisines = ['Italian', 'Japanese', 'Mexican', 'Indian', 'Mediterranean'] as const;
+export const cuisines = [
+	'Italian',
+	'Japanese',
+	'Mexican',
+	'Indian',
+	'Mediterranean',
+	'American',
+	'Chinese',
+	'Thai',
+	'Korean',
+	'Vietnamese',
+	'French',
+	'Greek',
+	'Spanish',
+	'Turkish',
+	'Lebanese',
+	'Persian',
+	'Ethiopian',
+	'Moroccan',
+	'Caribbean',
+	'Brazilian',
+	'Peruvian',
+	'Filipino',
+	'Indonesian',
+	'Malaysian',
+	'German'
+] as const;
 export const scenarios = [
 	{
 		atmosphere: 'Quiet',

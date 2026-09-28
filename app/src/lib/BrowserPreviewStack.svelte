@@ -5,39 +5,35 @@
 		id: string;
 		venue: string;
 		viewPath: string;
+		image?: string;
 	};
 
 	let { sessions }: { sessions: Session[] } = $props();
 	let expanded = $state(false);
 	let trigger = $state<HTMLButtonElement>();
 	let close = $state<HTMLButtonElement>();
+	let dialog = $state<HTMLDialogElement>();
 	let latest = $derived(sessions.at(-1));
-	let loaded = $state<Record<string, boolean>>({});
 
 	async function open() {
 		expanded = true;
 		await tick();
+		dialog?.showModal();
 		close?.focus();
 	}
 
 	async function dismiss() {
+		dialog?.close();
 		expanded = false;
 		await tick();
 		trigger?.focus();
 	}
 </script>
 
-<svelte:window onkeydown={(event) => event.key === 'Escape' && expanded && dismiss()} />
-
 <div class="preview-trigger" class:stacked={sessions.length > 1}>
 	<div class="preview-thumbnail" aria-hidden="true">
-		{#if !expanded && latest?.viewPath}
-			<iframe
-				src={latest.viewPath}
-				title="Live reservation browser thumbnail"
-				tabindex="-1"
-				referrerpolicy="no-referrer"
-			></iframe>
+		{#if latest?.image}
+			<img src={latest.image} alt="" />
 		{/if}
 	</div>
 	<button
@@ -52,11 +48,14 @@
 </div>
 
 {#if expanded}
-	<div
+	<dialog
+		bind:this={dialog}
 		class="preview-overlay"
-		role="dialog"
-		aria-modal="true"
 		aria-label="Live reservation browser"
+		oncancel={(event) => {
+			event.preventDefault();
+			void dismiss();
+		}}
 	>
 		<button
 			type="button"
@@ -67,31 +66,33 @@
 		></button>
 		<div class="preview-rail" role="group" aria-label="Live reservation browser views">
 			{#each sessions as session (session.id)}
-				<div class="preview-window" class:is-ready={loaded[session.id]}>
+				<div class="preview-window" class:is-ready={!!session.image}>
 					<div class="preview-shimmer" aria-hidden="true"></div>
-					{#if !loaded[session.id]}
+					{#if !session.image}
 						<span class="sr-only" role="status">Loading live reservation browser</span>
 					{/if}
-					<iframe
-						src={session.viewPath}
-						title={`Live reservation browser for ${session.venue}`}
-						tabindex="-1"
-						referrerpolicy="no-referrer"
-						onload={() => window.setTimeout(() => (loaded[session.id] = true), 650)}
-					></iframe>
+					{#if session.image}
+						<img src={session.image} alt={`Browser inspection of ${session.venue}`} />
+					{/if}
 				</div>
 			{/each}
 		</div>
+		{#if latest}
+			<a
+				tabindex="0"
+				href={latest.viewPath}
+				target="_blank"
+				rel="noopener noreferrer"
+				class="absolute top-6 left-6 text-sm text-white/75 underline underline-offset-4"
+				>Open in a tab</a
+			>
+		{/if}
 		<button
 			bind:this={close}
+			tabindex="0"
 			type="button"
 			class="preview-close"
 			aria-label="Close live reservation browser"
-			onkeydown={(event) => {
-				if (event.key === 'Tab') {
-					event.preventDefault();
-				}
-			}}
 			onclick={dismiss}
 		>
 			<svg
@@ -105,7 +106,7 @@
 				<path d="M6 6l12 12M18 6L6 18" />
 			</svg>
 		</button>
-	</div>
+	</dialog>
 {/if}
 
 <style>
@@ -142,14 +143,12 @@
 			0 0 0 1px rgb(255 255 255 / 0.16),
 			0 12px 32px rgb(0 0 0 / 0.28);
 	}
-	.preview-thumbnail iframe {
-		width: 900px;
-		height: 632px;
-		border: 0;
-		pointer-events: none;
-		transform: scale(0.16);
-		transform-origin: top left;
+	.preview-thumbnail img {
+		width: 100%;
+		height: 100%;
+		object-fit: contain;
 	}
+
 	.preview-open {
 		position: absolute;
 		inset: 0;
@@ -173,6 +172,13 @@
 		pointer-events: none;
 	}
 	.preview-overlay {
+		width: 100%;
+		height: 100dvh;
+		max-width: none;
+		max-height: none;
+		margin: 0;
+		padding: 0;
+		border: 0;
 		position: fixed;
 		inset: 0;
 		z-index: 50;
@@ -233,10 +239,10 @@
 			background-position: 0 0;
 		}
 	}
-	.preview-window iframe {
+	.preview-window img {
 		width: 100%;
 		height: 100%;
-		border: 0;
+		object-fit: contain;
 		pointer-events: none;
 	}
 	.preview-close {

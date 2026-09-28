@@ -2,7 +2,7 @@ import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { db } from '$lib/server/db';
 import { userProfile } from '$lib/server/db/schema';
-import { scenarios, cuisines, travelMinutes } from '$lib/onboarding';
+import { scenarios, travelMinutes } from '$lib/onboarding';
 import { eq } from 'drizzle-orm';
 
 export const load: PageServerLoad = async ({ locals, url }) => {
@@ -16,11 +16,11 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 };
 
 export const actions: Actions = {
-	default: async ({ request, locals }) => {
+	default: async ({ request, locals, url }) => {
 		if (!locals.user) redirect(303, '/login');
 		const form = await request.formData();
 		const chosenAtmospheres = [...new Set(form.getAll('atmosphere').map(String))];
-		const chosenCuisines = [...new Set(form.getAll('cuisine').map(String))];
+		const cuisineEntries = form.getAll('cuisine');
 		const travel = Number(form.get('travelMinutes'));
 
 		if (
@@ -35,11 +35,29 @@ export const actions: Actions = {
 				message: 'Choose one or two situations and a travel time.'
 			});
 		}
-		if (
-			chosenCuisines.length > 3 ||
-			chosenCuisines.some((value) => !cuisines.includes(value as (typeof cuisines)[number]))
-		) {
-			return fail(400, { message: 'Choose up to three cuisines from the list.' });
+		if (cuisineEntries.length > 32) {
+			return fail(400, { message: 'Submit up to three cuisines.' });
+		}
+		const chosenCuisines: string[] = [];
+		const seenCuisines = new Set<string>();
+		for (const entry of cuisineEntries) {
+			if (
+				typeof entry !== 'string' ||
+				entry.length > 256 ||
+				/[\u0000-\u001f\u007f-\u009f]/.test(entry)
+			) {
+				return fail(400, { message: 'Cuisine names must be text without control characters.' });
+			}
+			const cuisine = entry.trim().replace(/\s+/g, ' ');
+			if (cuisine.length > 60) {
+				return fail(400, { message: 'Cuisine names must be 60 characters or fewer.' });
+			}
+			if (!cuisine || seenCuisines.has(cuisine.toLowerCase())) continue;
+			seenCuisines.add(cuisine.toLowerCase());
+			chosenCuisines.push(cuisine);
+			if (chosenCuisines.length > 3) {
+				return fail(400, { message: 'Choose up to three cuisines.' });
+			}
 		}
 
 		await db
@@ -57,6 +75,6 @@ export const actions: Actions = {
 				set: { cuisines: chosenCuisines, atmospheres: chosenAtmospheres, travelMinutes: travel }
 			});
 
-		redirect(303, '/');
+		redirect(303, url.searchParams.has('passport') ? '/?passport=1' : '/');
 	}
 };

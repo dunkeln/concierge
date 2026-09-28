@@ -9,3 +9,7 @@
 | Completed booking        | None                                    | No confirmation claim                                                  | Requires a separate provider-confirmed result.                                                                                                                |
 
 Each reservation stop gets its own area, venue, date, party size, source, and evidence status. The adapter may fill gaps in venue discovery; it must not infer availability from Geoapify or a booking link.
+
+Named venue information uses `places.lookup`: Browserbase web search plus up to two bounded page reads, without area geocoding or reservation criteria. Source content and failed/redirected reads are returned separately; it is not inventory or booking proof.
+
+Menu lookup uses `menus.lookup`: named source discovery plus one bounded OpenRouter extraction. Dish names and optional descriptions/prices/sections must match the returned source excerpt. Cards may show a partial or dated menu; PDFs, inaccessible pages and unsupported items remain explicit limitations. Selections feed thread context and bounded explicit dish interests, not booking or food-order execution.

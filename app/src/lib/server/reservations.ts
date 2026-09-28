@@ -7,6 +7,7 @@ type ReservationQuery = {
 	restaurant?: unknown;
 	area?: unknown;
 	kind?: unknown;
+	cuisine?: unknown;
 	date?: unknown;
 	partySize?: unknown;
 	startTime?: unknown;
@@ -82,7 +83,8 @@ const availabilitySchema = z.object({
 async function inspectReservationPage(
 	stagehand: Stagehand,
 	input: ReservationQuery,
-	deadline = Date.now() + 110_000
+	deadline = Date.now() + 110_000,
+	onFrame?: (image: string) => Promise<void>
 ) {
 	const target = JSON.stringify({
 		restaurant: input.restaurant,
@@ -113,6 +115,11 @@ async function inspectReservationPage(
 		const page = await stagehand.browser.context.activePage();
 		if (!page) throw new Error('Reservation page unavailable');
 		if (!publicHttps(await page.url())) throw new Error('Non-public reservation destination');
+		if (onFrame)
+			await page
+				.screenshot({ type: 'jpeg', quality: 50 })
+				.then((bytes) => onFrame(`data:image/jpeg;base64,${Buffer.from(bytes).toString('base64')}`))
+				.catch(() => undefined);
 		const { data } = await Sentry.startSpan(
 			{ name: 'reservation.browser.read', op: 'browser' },
 			async (span) => {
@@ -190,6 +197,7 @@ export async function findReservationPages(
 		id: string;
 		venue: string;
 		pageId?: string;
+		image?: string;
 	}) => Promise<void>
 ) {
 	const restaurantInput = typeof input.restaurant === 'string' ? input.restaurant.trim() : '';
@@ -204,6 +212,11 @@ export async function findReservationPages(
 	if (input.kind !== undefined && input.kind !== 'restaurant' && input.kind !== 'cafe') {
 		return { error: 'Choose restaurant or cafe.' };
 	}
+	if (
+		input.cuisine !== undefined &&
+		(typeof input.cuisine !== 'string' || input.cuisine.length > 40)
+	)
+		return { error: 'Provide a short cuisine name.' };
 	if (
 		input.date !== undefined &&
 		(typeof input.date !== 'string' ||
@@ -254,6 +267,7 @@ export async function findReservationPages(
 	try {
 		const query = [
 			restaurant,
+			input.cuisine,
 			area,
 			input.kind === 'cafe' ? 'cafe reservations' : 'restaurant reservations',
 			input.bookingProvider
@@ -300,6 +314,12 @@ export async function findReservationPages(
 			result.inspectionOutcome = 'missing_date_or_party';
 			return result;
 		}
+		if (!restaurant) {
+			result.inspectionOutcome = 'needs_named_venue';
+			result.availability =
+				'Choose a named venue matching the request, then inspect its booking page.';
+			return result;
+		}
 		let browser: Awaited<ReturnType<typeof browserbase.launch>> | undefined;
 		let stagehand: Stagehand | undefined;
 		let stage = 'launch';
@@ -338,7 +358,21 @@ export async function findReservationPages(
 							op: 'browser',
 							attributes: { 'reservation.source_host': new URL(candidate.url).hostname }
 						},
-						() => inspectReservationPage(stagehand!, { ...input, restaurant }, deadline)
+						() =>
+							inspectReservationPage(
+								stagehand!,
+								{ ...input, restaurant },
+								deadline,
+								onSession
+									? (image) =>
+											onSession({
+												open: true,
+												id: browser!.sessionId!,
+												venue: restaurant || area,
+												image
+											})
+									: undefined
+							)
 					);
 					result.inspectionDetail =
 						observed.detail.slice(0, 300) ||

@@ -17,7 +17,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		locals.user
 			? db.query.userProfile.findFirst({
 					where: eq(userProfile.userId, locals.user.id),
-					columns: { atmospheres: true, cuisines: true }
+					columns: { atmospheres: true, cuisines: true, travelMinutes: true }
 				})
 			: null,
 		locals.user
@@ -49,7 +49,6 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 			: null,
 		chatConfigured: Boolean(env.OPENROUTER_API_KEY),
 		geoapifyMapKey: env.GEOAPIFY_API_KEY || null,
-		atmospheres: profile?.atmospheres ?? [],
 		profile: profile ?? null,
 		googleEnabled,
 		calendarConnected: google.some(({ scope }) => hasCalendarScopes(scope)),

@@ -65,10 +65,7 @@
 	);
 </script>
 
-<section
-	class="w-full max-w-md rounded-2xl bg-secondary p-2 text-sm"
-	aria-label="Reservation calendar"
->
+<section class="w-full max-w-md space-y-2 text-sm" aria-label="Reservation calendar">
 	<div class="flex items-center justify-between gap-2 px-2 py-2">
 		<div>
 			<p class="font-medium">{inspection.venue}</p>

@@ -30,3 +30,6 @@ vite.config.ts.timestamp-*
 
 # Sentry Config File
 .env.sentry-build-plugin
+
+# Local failure captures and evaluation proof
+/app/tests/local/

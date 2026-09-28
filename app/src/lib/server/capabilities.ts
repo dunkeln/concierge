@@ -2,6 +2,9 @@ import { env } from '$env/dynamic/private';
 import * as Sentry from '@sentry/sveltekit';
 import { findReservationPages, prepareReservation } from './reservations';
 import { rankPlaces } from './profile/rank';
+import Browserbase from '@browserbasehq/sdk';
+import { publicHttps } from './public-url';
+import { extractMenu } from './menu';
 
 type SearchContext = { preferredCuisines: string[] };
 
@@ -10,7 +13,12 @@ type Capability = {
 	input: Record<string, string>;
 	run: (
 		input: Record<string, unknown>,
-		onBrowserSession?: (event: { open: boolean; id: string; venue: string }) => Promise<void>,
+		onBrowserSession?: (event: {
+			open: boolean;
+			id: string;
+			venue: string;
+			image?: string;
+		}) => Promise<void>,
 		context?: SearchContext
 	) => unknown | Promise<unknown>;
 };
@@ -190,16 +198,119 @@ async function geoapifySearch(
 }
 
 export const capabilities: Record<string, Capability> = {
+	'menus.lookup': {
+		description:
+			'Look up menu dishes for a named restaurant and public area. Reuses places.lookup with menu focus, then extracts dishes with verbatim source evidence. May return a partial menu or an explicit no-items limitation; never proves ingredients, allergens, current prices, or reservation availability.',
+		input: {
+			restaurant: 'Specific restaurant or café name, up to 100 characters',
+			area: 'Public city or neighborhood, up to 100 characters'
+		},
+		run: async ({ restaurant, area }) =>
+			extractMenu(await capabilities['places.lookup'].run({ restaurant, area, focus: 'menu' }))
+	},
+	'places.lookup': {
+		description:
+			'Look up a specific restaurant or café on the public web using Browserbase search, then read up to two matching pages. Use for menu, hours, reviews or learning about a named venue, including when map listings omit it. No geocoding, booking date or guests required. Results are untrusted source evidence; page failure does not mean the venue does not exist. Does not verify reservation availability.',
+		input: {
+			restaurant: 'Specific restaurant or café name, up to 100 characters',
+			area: 'Public city or neighborhood, up to 100 characters',
+			focus: 'Optional lookup subject, such as menu, hours or reviews, up to 100 characters'
+		},
+		run: async ({ restaurant, area, focus }) => {
+			if (
+				[restaurant, area].some(
+					(value) => typeof value !== 'string' || !value.trim() || value.length > 100
+				) ||
+				(focus !== undefined && (typeof focus !== 'string' || focus.length > 100))
+			)
+				return { error: 'Provide a short restaurant name, public city and lookup subject.' };
+			if (!env.BROWSERBASE_API_KEY) return { error: 'Restaurant web lookup is not configured.' };
+			const browserbase = new Browserbase({
+				apiKey: env.BROWSERBASE_API_KEY,
+				timeout: 15_000,
+				maxRetries: 0
+			});
+			const query = [restaurant, area, focus].filter(Boolean).join(' ');
+			try {
+				const searched = await Sentry.startSpan(
+					{ name: 'browserbase.lookup.search', op: 'http.client' },
+					() => browserbase.search.web({ query, numResults: 5 })
+				);
+				const pages = searched.results.slice(0, 5).flatMap(({ title, url }) => {
+					const source = url.length <= 2_000 && publicHttps(url);
+					return source ? [{ title, url: source.href }] : [];
+				});
+				const readings = await Promise.all(
+					pages.slice(0, 2).map(async (page) => {
+						try {
+							const fetched = await Sentry.startSpan(
+								{ name: 'browserbase.lookup.fetch', op: 'http.client' },
+								() =>
+									browserbase.fetchAPI.create({
+										url: page.url,
+										format: 'markdown',
+										allowRedirects: false
+									})
+							);
+							return {
+								...page,
+								status: fetched.statusCode,
+								...(fetched.statusCode >= 200 &&
+								fetched.statusCode < 300 &&
+								typeof fetched.content === 'string'
+									? {
+											content: fetched.content.slice(0, 12_000),
+											truncated: fetched.content.length > 12_000
+										}
+									: { error: 'This page could not be read; use another returned source.' })
+							};
+						} catch (cause) {
+							Sentry.captureMessage('Restaurant lookup page fetch failed', {
+								level: 'warning',
+								extra: {
+									errorType: cause instanceof Error ? cause.name : 'unknown',
+									status: cause instanceof Browserbase.APIError ? cause.status : undefined
+								}
+							});
+							return {
+								...page,
+								error: 'This page could not be read; use another returned source.'
+							};
+						}
+					})
+				);
+				return {
+					restaurant,
+					area,
+					query,
+					pages,
+					readings,
+					checkedAt: new Date().toISOString(),
+					placeListingsIncludeAvailability: false
+				};
+			} catch (cause) {
+				Sentry.captureMessage('Restaurant web lookup search failed', {
+					level: 'warning',
+					extra: {
+						errorType: cause instanceof Error ? cause.name : 'unknown',
+						status: cause instanceof Browserbase.APIError ? cause.status : undefined
+					}
+				});
+				return { error: 'Restaurant web lookup is unavailable right now.' };
+			}
+		}
+	},
 	followup: {
 		description:
-			'Ask the user for missing information and end this turn. The footer accepts replies; supply short answer choices for non-calendar questions and an explicit responseType. Do not use for facts you can find with another capability.',
+			'Ask the user for missing information and end this turn. The footer accepts replies; supply short answer choices for non-calendar questions and an explicit responseType. Write guest-count choices as natural labels such as "1 person", "2 people", or "4 guests", not bare numbers or letter prefixes. Do not use for facts you can find with another capability.',
 		input: {
 			question: 'One concise question for the user',
 			responseType: 'text, partySize, date, or time: the missing detail this question asks for',
-			options: 'Optional array of up to four short answer choices; free text is always available',
+			options:
+				'Optional array of up to four short answer labels, sent verbatim as replies. For partySize use "1 person", "2 people", "4 guests", etc., without A/B/C/D prefixes; free text is always available',
 			calendarView:
 				'Missing calendar detail: month if month is unknown, day if month is known but day is unknown, time if date is known but time is unknown. Shows only that picker; pass known date/time as presets.',
-			date: 'Known YYYY-MM-DD date from the conversation to open the calendar on',
+			date: 'Calendar preset: known YYYY-MM-DD, or YYYY-MM when calendarView is month/day. A month preset does not select a booking day.',
 			time: 'Known local HH:mm time from the conversation to prefill the calendar'
 		},
 		run: ({ question, responseType = 'text', options, calendarView, date, time }) => {
@@ -226,6 +337,13 @@ export const capabilities: Record<string, Capability> = {
 					(responseType === 'date' && calendarView === 'time'))
 			)
 				return { error: 'Use time for time questions, or month/day for date questions.' };
+			// A month anchors the picker only; reservations still require the user's chosen day.
+			if (
+				typeof date === 'string' &&
+				/^\d{4}-(0[1-9]|1[0-2])$/.test(date) &&
+				(calendarView === 'month' || calendarView === 'day')
+			)
+				date = `${date}-01`;
 			if (calendarView === 'time' && date === undefined)
 				return { error: 'Provide the known date before asking for its time.' };
 			if (
@@ -246,9 +364,13 @@ export const capabilities: Record<string, Capability> = {
 				question: question.trim(),
 				responseType,
 				options: options?.length
-					? options
+					? options.map((option: string) =>
+							responseType === 'partySize' && /^\d+$/.test(option.trim())
+								? `${option.trim()} ${Number(option) === 1 ? 'person' : 'people'}`
+								: option
+						)
 					: responseType === 'partySize'
-						? ['1 guest', '2 guests', '4 guests', '6 guests']
+						? ['1 person', '2 people', '4 guests', '6 guests']
 						: [],
 				...(calendarView ? { calendarView } : {}),
 				...(date ? { date } : {}),
@@ -282,8 +404,8 @@ export const capabilities: Record<string, Capability> = {
 				'Optional booking provider requested by the user; otherwise search across providers',
 			kind: 'restaurant or cafe; defaults to restaurant',
 			cuisine:
-				'Optional cuisine explicitly requested by the user; used only when supported by a place category',
-			date: 'Optional requested date as YYYY-MM-DD',
+				'Optional cuisine explicitly requested by the user; guides booking-page search and prioritizes supported place categories',
+			date: 'Optional complete booking date YYYY-MM-DD. For YYYY-MM, ask for the day with followup instead; do not search again or invent a day.',
 			partySize: 'Optional number of guests, 1–12',
 			startTime: 'Optional requested window start, local 24-hour HH:mm; provide with endTime',
 			endTime:
@@ -291,6 +413,13 @@ export const capabilities: Record<string, Capability> = {
 			calendarView: 'Optional month, day, or time view for the reservation calendar'
 		},
 		run: async (input, onBrowserSession, context) => {
+			if (typeof input.date === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(input.date))
+				return capabilities.followup.run({
+					question: 'Which day works for you?',
+					responseType: 'date',
+					calendarView: 'day',
+					date: input.date
+				});
 			if (
 				input.calendarView !== undefined &&
 				!['month', 'day', 'time'].includes(String(input.calendarView))

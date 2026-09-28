@@ -1,8 +1,9 @@
-import { and, desc, eq, lt, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, lt, sql } from 'drizzle-orm';
 import { error } from '@sveltejs/kit';
 import type { UIMessage } from 'ai';
 import { db } from './db';
 import { chatMessage, chatThread } from './db/schema';
+import type { ChatSummary } from './chat-context';
 
 export const threadIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -63,7 +64,9 @@ export async function readThread(id: string, userId: string) {
 		where: and(eq(chatThread.id, id), eq(chatThread.userId, userId))
 	});
 	if (!thread) error(404, 'Chat not found.');
-	return thread;
+	const context = { ...thread.context };
+	delete context._summary;
+	return { ...thread, context };
 }
 
 export async function saveThreadTitle(id: string, userId: string, title: string) {
@@ -106,7 +109,7 @@ export async function beginTurn(
 		insert into ${chatThread} (id, user_id, title, context, revision, turn_token, busy_until)
 		values (${id}, ${userId}, ${title}, ${JSON.stringify(context)}::jsonb, 1, ${token}, now() + interval '10 minutes')
 		on conflict (id) do update set
-			context = excluded.context, revision = ${chatThread}.revision + 1,
+			context = excluded.context || jsonb_build_object('_summary', ${chatThread}.context->'_summary'), revision = ${chatThread}.revision + 1,
 			turn_token = excluded.turn_token, busy_until = excluded.busy_until, updated_at = now()
 		where ${chatThread}.user_id = ${userId}
 			and (${chatThread}.busy_until is null or ${chatThread}.busy_until < now())
@@ -118,15 +121,19 @@ export async function beginTurn(
 					where later.thread_id = ${id} and later.position > prior.position
 				))
 			)
-		returning id, revision
+		returning id, revision, context
 	), saved as (
 		insert into ${chatMessage} (thread_id, id, position, message)
 		select id, ${message.id}, revision * 2, ${JSON.stringify(durableMessage(message))}::jsonb from claimed
 		on conflict do nothing
-	) select revision from claimed`);
+	) select revision, context from claimed`);
 	const thread = result.rows[0];
 	if (!thread) error(409, 'This chat is unavailable or still responding.');
-	return { token, position: Number(thread.revision) * 2 + 1 };
+	return {
+		token,
+		position: Number(thread.revision) * 2 + 1,
+		summary: ((thread.context as Record<string, unknown>)._summary as ChatSummary | null) ?? null
+	};
 }
 
 export async function finishTurn(
@@ -146,4 +153,24 @@ export async function finishTurn(
 			on conflict do nothing`
 			: sql`select id from owned`
 	}`);
+}
+
+// Called only after beginTurn claims this owner's thread; summary never reaches page data.
+export async function readContextMessages(id: string, after: number) {
+	return db
+		.select({ position: chatMessage.position, message: chatMessage.message })
+		.from(chatMessage)
+		.where(and(eq(chatMessage.threadId, id), gt(chatMessage.position, after)))
+		.orderBy(asc(chatMessage.position));
+}
+
+export async function saveChatSummary(id: string, token: string, summary: ChatSummary) {
+	const rows = await db
+		.update(chatThread)
+		.set({
+			context: sql`jsonb_set(${chatThread.context}, '{_summary}', ${JSON.stringify(summary)}::jsonb)`
+		})
+		.where(and(eq(chatThread.id, id), eq(chatThread.turnToken, token)))
+		.returning({ id: chatThread.id });
+	if (!rows.length) throw new Error('Chat summary turn ownership expired');
 }

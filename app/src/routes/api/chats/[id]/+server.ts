@@ -6,7 +6,8 @@ export const GET: RequestHandler = async ({ locals, params, url }) => {
 	if (!locals.user) error(401, 'Sign in to chat.');
 	await readThread(params.id, locals.user.id);
 	const before = Number(url.searchParams.get('before'));
-	if (!Number.isSafeInteger(before) || before < 1) error(400, 'Invalid message cursor.');
+	if (!Number.isSafeInteger(before) || before < 1 || before > 2147483647)
+		error(400, 'Invalid message cursor.');
 	const rows = await readMessages(params.id, before);
 	return json({
 		messages: rows.map((row) => row.message),

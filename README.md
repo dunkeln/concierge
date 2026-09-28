@@ -1,46 +1,60 @@
 # Concierge
 
-A conversational concierge for finding places and exploring reservations.
+Find a restaurant, check a time, and reach checkout through a conversation. You make the final booking.
 
-[Open the app](https://concierge-pearl.vercel.app)
+**[Try Concierge](https://concierge-pearl.vercel.app)**
+
+![From a dinner request to restaurant checkout](proof/reservation-journey.gif)
+
+*Ai Fiori · two guests · 7 pm · OpenTable checkout*
+
+## The experience
+
+- Ask naturally; date, time and guest controls appear when needed.
+- Explore an updating map and sourced menus, with saved taste guiding open-ended searches.
+- Keep chats, check calendar conflicts, and collect visits in your passport.
 
 ## Architecture
 
+The agent discovers tools with `search` and calls them with `execute`. Recommendations rank sourced cuisine matches deterministically: the current request first, saved taste second. Selected dishes enrich conversation context. Browserbase and Stagehand inspect reservation services such as OpenTable and SevenRooms, verify availability, and recheck the chosen time before handing checkout to you.
+
+**Cost choices:** Chat and menu extraction use GPT-6 Luna through OpenRouter. Ranking needs no model call; saved summaries spread conversation-compaction work across later turns. Bounded preference history, tool steps and browser searches constrain per-request work, while bookable times are checked fresh.
+
 ```mermaid
 flowchart LR
-    UI["Frontend<br/>Chat · maps · calendar · passport"]
+    UI["SvelteKit<br/>Chat · map · calendar · passport"]
+    Agent["Agent<br/>Saved context → search → execute"]
+    Rank["Recommendations<br/>Request first · saved taste second"]
+    Sources["Geoapify<br/>Places · cuisine categories"]
+    Browser["Browserbase / Stagehand<br/>Menus · availability · checkout"]
+    Store[("Neon / Postgres<br/>Chats · preferences · visits")]
+    Calendar["Connected calendar<br/>Schedule conflicts"]
 
-    subgraph Backend
-        Auth["Auth<br/>Session checks · /api/auth/*"]
-        Chat["POST /api/chat<br/>Validate context · stream responses"]
-        Agent["Agent<br/>Prompt + preferences · model · tool loop"]
-        Tools["Tools<br/>Place search · reservation inspection<br/>Checkout handoff · follow-up questions"]
-        Busy["GET /api/calendar/busy<br/>Read schedule conflicts"]
-        Preview["GET /api/reservations/view<br/>Authorize browser preview / checkout"]
-        Links["GET /api/link-preview<br/>Read page metadata"]
-        Profile["Page loads + form actions<br/>Preferences · passport entries"]
-    end
-
-    Store[("Store<br/>Accounts · sessions · preferences · passport")]
-    Places["Place endpoints<br/>Geocoding · nearby venues"]
-    Browser["Browser endpoints<br/>Page discovery · inspection · checkout"]
-    Calendar["Calendar endpoints<br/>Calendar list · free/busy"]
-    Metadata["Metadata endpoint<br/>Title · description · image"]
-
-    UI --> Auth
-    Auth --> Store
-    UI --> Chat & Busy & Preview & Links & Profile
-    Chat --> Agent
-    Store -->|Preferences| Agent
-    Agent --> Tools
-    Tools --> Places & Browser
-    Busy --> Calendar
-    Preview --> Browser
-    Links --> Metadata
-    Profile --> Store
+    UI --> Agent
+    Store --> Agent & Rank
+    Agent --> Sources & Browser & Calendar
+    Sources --> Rank
+    Rank --> Agent
+    Agent --> UI
+    UI --> Store
 ```
 
-## Reservation services
+Better Auth owns sessions; the AI SDK streams replies through OpenRouter. Account-owned chat storage keeps explicit choices across conversations. A restaurant listing can inform a recommendation; verified provider inventory supplies bookable times.
 
-- [OpenTable](https://www.opentable.com/)
-- [SevenRooms](https://sevenrooms.com/)
+## Evaluations
+
+47/47 selected regression checks passed. Sentry’s 283 traced tool executions show where time goes: reservation checks take 10 seconds at the median and 47 seconds at p95.
+
+[![Median and p95 tool latency from Sentry, alongside Braintrust regression scores](proof/tool-latency-2026-09-28.svg)](https://concierge-vn.sentry.io/explore/traces/?query=span.op%3Aagent.tool&project=4512153271336960&statsPeriod=7d)
+
+[Runtime performance](https://concierge-vn.sentry.io/explore/traces/?query=span.op%3Aagent.tool&project=4512153271336960&statsPeriod=7d) · [Regression scores](https://www.braintrust.dev/app/holdthatheat/p/Concierge/experiments/observed-browser-journeys-2026-09-28T04-39-04-117Z)
+
+## Developer workflow
+
+A failed conversation becomes a regression case: Playwright reproduces it, Sentry locates the failing request, and Braintrust scores the decisions. Fix, replay, then verify the journey. Fast checks run first; recorded calls can be rescored without another generation.
+
+[Checkout repair](proof/README.md) · [Tests](app/tests/readiness.md)
+
+## Next
+
+Reservation confirmation, reminders and post-visit follow-ups; better alternatives when a preferred restaurant has no suitable time. Strengthen taste profiles with explicit feedback and context, so recommendations learn what you enjoy without treating every click as a preference or overriding today’s request.

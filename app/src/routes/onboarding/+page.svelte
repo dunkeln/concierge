@@ -1,6 +1,6 @@
 <script lang="ts">
 	import * as Avatar from '$lib/components/ui/avatar';
-	import { cuisines, scenarios, travelMinutes } from '$lib/onboarding';
+	import PreferencesForm from '$lib/PreferencesForm.svelte';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -31,84 +31,6 @@
 			always ask for something different.
 		</p>
 
-		<form method="POST" class="mt-10 space-y-9">
-			<fieldset>
-				<legend class="mb-3 text-sm font-medium"
-					>Picture a good outing <span class="text-primary-foreground/55">· choose up to 2</span
-					></legend
-				>
-				<div class="grid gap-3 sm:grid-cols-2">
-					{#each scenarios as scenario (scenario.atmosphere)}
-						<label class="block">
-							<input
-								class="peer sr-only"
-								type="checkbox"
-								name="atmosphere"
-								value={scenario.atmosphere}
-								checked={data.profile?.atmospheres.includes(scenario.atmosphere) ?? false}
-							/>
-							<span
-								class="flex min-h-28 cursor-pointer flex-col justify-center rounded-2xl border border-primary-foreground/25 px-5 py-4 transition-colors peer-checked:border-primary-foreground peer-checked:bg-primary-foreground/12 peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-primary-foreground hover:border-primary-foreground/60"
-							>
-								<span class="font-medium">{scenario.title}</span>
-								<span class="mt-1 text-sm text-primary-foreground/60">{scenario.detail}</span>
-							</span>
-						</label>
-					{/each}
-				</div>
-			</fieldset>
-
-			<fieldset>
-				<legend class="mb-3 text-sm font-medium">
-					Favorite cuisines <span class="text-primary-foreground/55"
-						>· optional, choose up to 3</span
-					>
-				</legend>
-				<div class="flex flex-wrap gap-2">
-					{#each cuisines as cuisine (cuisine)}
-						<label>
-							<input
-								class="peer sr-only"
-								type="checkbox"
-								name="cuisine"
-								value={cuisine}
-								checked={data.profile?.cuisines.includes(cuisine) ?? false}
-							/>
-							<span
-								class="inline-flex min-h-11 cursor-pointer items-center rounded-lg border border-primary-foreground/30 px-4 text-sm transition-colors peer-checked:bg-primary-foreground peer-checked:text-primary peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-primary-foreground hover:border-primary-foreground/70"
-								>{cuisine}</span
-							>
-						</label>
-					{/each}
-				</div>
-			</fieldset>
-
-			<fieldset>
-				<legend class="mb-3 text-sm font-medium">Willing to travel</legend>
-				<div class="flex flex-wrap gap-2">
-					{#each travelMinutes as minutes (minutes)}
-						<label>
-							<input
-								class="peer sr-only"
-								type="radio"
-								name="travelMinutes"
-								value={minutes}
-								checked={minutes === (data.profile?.travelMinutes ?? 30)}
-							/>
-							<span
-								class="inline-flex min-h-11 cursor-pointer items-center rounded-lg border border-primary-foreground/30 px-4 text-sm transition-colors peer-checked:bg-primary-foreground peer-checked:text-primary peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-primary-foreground hover:border-primary-foreground/70"
-								>{minutes} min</span
-							>
-						</label>
-					{/each}
-				</div>
-			</fieldset>
-
-			{#if form?.message}<p role="alert" class="text-sm text-red-400">{form.message}</p>{/if}
-			<button
-				class="min-h-12 rounded-lg bg-primary-foreground px-6 font-medium text-primary transition-transform active:scale-95"
-				>{data.profile ? 'Save preferences' : 'Continue'} <span aria-hidden="true">→</span></button
-			>
-		</form>
+		<PreferencesForm profile={data.profile} message={form?.message} />
 	</div>
 </main>

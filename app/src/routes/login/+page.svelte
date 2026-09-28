@@ -84,21 +84,22 @@
 				{registering ? 'Sign in' : 'Create an account'}
 			</button>
 		</p>
-		{#if data.githubEnabled}
-			<button class="social-action" type="submit" form="github-sign-in">
-				Continue with GitHub <span aria-hidden="true">→</span>
-			</button>
-		{/if}
-		{#if data.googleEnabled}
-			<button class="social-action" type="submit" form="google-sign-in">
-				Continue with Google <span aria-hidden="true">→</span>
-			</button>
-		{/if}
-		{#if data.appleEnabled}
-			<button class="social-action" type="submit" form="apple-sign-in">
-				Continue with Apple <span aria-hidden="true">→</span>
-			</button>
-		{/if}
+		<div class="social-providers" role="group" aria-label="Other ways to sign in">
+			{#each [{ id: 'google', label: 'Google', enabled: data.googleEnabled }, { id: 'apple', label: 'Apple', enabled: data.appleEnabled }, { id: 'github', label: 'GitHub', enabled: data.githubEnabled }] as provider (provider.id)}
+				<button
+					class="social-action"
+					type="submit"
+					form={`${provider.id}-sign-in`}
+					aria-label={`Sign in with ${provider.label}`}
+					title={provider.enabled
+						? `Sign in with ${provider.label}`
+						: `${provider.label} sign-in is unavailable in this environment`}
+					disabled={!provider.enabled}
+				>
+					<img src={`/brands/${provider.id}.svg`} width="20" height="20" alt="" />
+				</button>
+			{/each}
+		</div>
 	</div>
 {/snippet}
 
@@ -265,12 +266,6 @@
 		line-height: 1;
 	}
 
-	.social-action span {
-		color: #a64b29;
-		font-size: 1.1rem;
-		line-height: 1;
-	}
-
 	.passport-options {
 		display: flex;
 		flex-direction: column;
@@ -294,15 +289,39 @@
 		cursor: pointer;
 	}
 
+	.social-providers {
+		display: flex;
+		align-items: center;
+		gap: 0.625rem;
+	}
 	.social-action {
 		display: inline-flex;
-		min-height: 2.75rem;
+		width: 2.75rem;
+		height: 2.75rem;
 		align-items: center;
-		gap: 0.4rem;
+		justify-content: center;
+		border-radius: 0.75rem;
+		background: rgb(25 24 23 / 5%);
 		color: #191817;
-		font-size: 0.72rem;
-		font-weight: 700;
 		cursor: pointer;
+		transition:
+			background-color 150ms,
+			transform 150ms;
+	}
+	.social-action:hover:not(:disabled) {
+		background: rgb(25 24 23 / 10%);
+	}
+	.social-action:active:not(:disabled) {
+		transform: scale(0.96);
+	}
+	.social-action:disabled {
+		opacity: 0.3;
+		cursor: not-allowed;
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.social-action {
+			transition: none;
+		}
 	}
 
 	.submit-action:focus-visible,

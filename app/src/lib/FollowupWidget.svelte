@@ -26,7 +26,6 @@
 <section class="w-full max-w-md space-y-3 self-end text-sm" aria-label="Follow-up response">
 	{#if calendarView}
 		<CalendarView
-			progressive
 			initialView={calendarView}
 			initialDate={date ?? todayString}
 			initialTime={time}
@@ -39,16 +38,13 @@
 		/>
 	{/if}
 	{#if options.length}
-		<div class="flex flex-wrap gap-2">
+		<div class="ml-auto flex w-fit max-w-full flex-col gap-2">
 			{#each options as option, index (index)}
 				<button
 					type="button"
 					{disabled}
-					class="min-h-11 rounded-lg border border-primary-foreground/25 bg-secondary px-3 text-left hover:bg-primary-foreground/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50"
-					onclick={() => onReply(option)}
-					><span aria-hidden="true" class="mr-2 text-primary-foreground/50"
-						>{String.fromCharCode(65 + index)}</span
-					>{option}</button
+					class="min-h-11 w-full rounded-lg border border-primary-foreground/25 bg-secondary px-3 text-left hover:bg-primary-foreground/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50"
+					onclick={() => onReply(option)}>{option}</button
 				>
 			{/each}
 		</div>

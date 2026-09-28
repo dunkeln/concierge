@@ -7,6 +7,8 @@
 	import SFIcon from '@alexdev404/sficons-svelte';
 	import * as Bubble from '$lib/components/ui/bubble';
 	import * as Message from '$lib/components/ui/message';
+	import MenuCard from '$lib/MenuCard.svelte';
+	import type { Menu, DishSelection } from '$lib/menu';
 	import MapWidget from '$lib/MapWidget.svelte';
 	import ReservationCalendar from '$lib/ReservationCalendar.svelte';
 	import FollowupWidget from '$lib/FollowupWidget.svelte';
@@ -150,6 +152,9 @@
 	let selectedPlace = $state<{ id: string; name: string; area: string } | null>(
 		(initialThread?.context.selectedPlace as { id: string; name: string; area: string }) ?? null
 	);
+	let selectedDishes = $state<DishSelection[]>(
+		(initialThread?.context.selectedDishes as DishSelection[]) ?? []
+	);
 	let selectedCuisine = $state<string | null>(null);
 	let sessionCuisine = $state<string | null>(
 		(initialThread?.context.preferredCuisine as string) ?? null
@@ -178,6 +183,7 @@
 		venue: string;
 		viewPath: string;
 		open: boolean;
+		image?: string;
 	};
 	let browserSessions = $state<BrowserSession[]>([]);
 	type ChatFailure = { message: string; retry: boolean; signIn?: boolean };
@@ -213,23 +219,49 @@
 	});
 	const chat = new Chat({
 		messages: untrack(() => data.thread?.messages ?? []),
-		onFinish: () => {
-			if (persistedResponse && page.url.pathname === '/' && !passportOpen)
-				void goto(`/?chat=${threadId}`, {
+		onFinish: async ({ isDisconnect }) => {
+			const finishedThread = threadId;
+			if (!finishedThread || page.url.pathname !== '/' || passportOpen) return;
+			try {
+				// A lost response can follow a successful commit. Recover storage, never resend the model.
+				if (!persistedResponse) {
+					if (!isDisconnect && chat.error?.name !== 'TimeoutError') return;
+					const saved = await fetch(`/api/chats/${finishedThread}?before=2147483647`, {
+						signal: AbortSignal.timeout(10_000)
+					});
+					if (!saved.ok) return;
+				}
+				if (threadId !== finishedThread || page.url.pathname !== '/' || passportOpen) return;
+				await goto(`/?chat=${finishedThread}`, {
 					replaceState: true,
 					invalidateAll: true,
 					keepFocus: true,
 					noScroll: true
 				});
+			} catch {
+				// Keep the existing error/retry surface if saved history cannot be reached.
+			}
 		},
 		onData: (part) => {
 			if (part.type !== 'data-browser') return;
 			if (!part.data || typeof part.data !== 'object') return;
 			const event = part.data as Partial<BrowserSession>;
 			if (typeof event.id !== 'string' || !event.id || event.id.length > 200) return;
+			if (
+				typeof event.image === 'string' &&
+				event.image.length <= 2_000_000 &&
+				/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(event.image)
+			) {
+				browserSessions = browserSessions.map((session) =>
+					session.id === event.id && session.open ? { ...session, image: event.image } : session
+				);
+				return;
+			}
 			if (event.open === false) {
 				browserSessions = browserSessions.map((session) =>
-					session.id === event.id ? { ...session, open: false, viewPath: '' } : session
+					session.id === event.id
+						? { ...session, open: false, viewPath: '', image: undefined }
+						: session
 				);
 				return;
 			}
@@ -248,7 +280,15 @@
 		},
 		transport: new DefaultChatTransport({
 			fetch: async (input, init) => {
-				const response = await fetch(input, init);
+				persistedResponse = false;
+				// Covers response-body delivery too; local abort does not cancel the server's durable turn.
+				const response = await fetch(input, {
+					...init,
+					signal: AbortSignal.any([
+						...(init?.signal ? [init.signal] : []),
+						AbortSignal.timeout(210_000)
+					])
+				});
 				persistedResponse = response.ok && response.headers.get('x-chat-thread') === threadId;
 				return response;
 			},
@@ -265,7 +305,8 @@
 						selectedPlace: $state.snapshot(selectedPlace),
 						preferredCuisine: sessionCuisine,
 						selectedDate,
-						selectedSlot: $state.snapshot(selectedSlot)
+						selectedSlot: $state.snapshot(selectedSlot),
+						selectedDishes: $state.snapshot(selectedDishes)
 					}
 				};
 			}
@@ -293,6 +334,7 @@
 		)
 			return;
 		pendingReplyMessageId = messageId;
+		messageField?.focus();
 		try {
 			await chat.sendMessage({ text: reply });
 		} catch {
@@ -312,16 +354,14 @@
 				chat.status === 'streaming'
 			)
 				return;
-			if (id === loadedThreadId && saved?.messages.at(-1)?.id === chat.messages.at(-1)?.id) {
-				loadedLastMessageId = saved?.messages.at(-1)?.id;
-				return;
-			}
+			// Equal assistant IDs do not prove equal content after a quietly truncated stream.
+			const changedThread = id !== loadedThreadId;
 			loadedThreadId = id;
 			loadedLastMessageId = saved?.messages.at(-1)?.id;
 			threadId = id ?? '';
 			chat.messages = saved?.messages ?? [];
 			chat.clearError();
-			input = '';
+			if (changedThread) input = '';
 			browserSessions = [];
 			pendingReplyMessageId = null;
 			const context = saved?.context ?? {};
@@ -329,6 +369,7 @@
 			sessionCuisine = (context.preferredCuisine as string) ?? null;
 			selectedDate = (context.selectedDate as string) ?? null;
 			selectedSlot = (context.selectedSlot as typeof selectedSlot) ?? null;
+			selectedDishes = (context.selectedDishes as DishSelection[]) ?? [];
 			selectedCuisine = null;
 			oldestPosition = saved?.oldestPosition ?? null;
 			hasOlder = saved?.hasOlder ?? false;
@@ -377,6 +418,7 @@
 		chat.clearError();
 		input = '';
 		selectedPlace = null;
+		selectedDishes = [];
 		selectedCuisine = null;
 		sessionCuisine = null;
 		selectedDate = null;
@@ -397,7 +439,11 @@
 			)
 				return {
 					question: output.question,
-					options: output.options as string[],
+					options: (output.options as string[]).map((option) =>
+						output.responseType === 'partySize' && /^\d+$/.test(option.trim())
+							? `${option.trim()} ${Number(option) === 1 ? 'person' : 'people'}`
+							: option
+					),
 					calendarView:
 						['date', 'time'].includes(String(output.responseType)) &&
 						['month', 'day', 'time'].includes(String(output.calendarView))
@@ -421,7 +467,14 @@
 		return current?.role === 'assistant' ? followupFor(current) : null;
 	});
 
-	type Place = { id: string; name: string; lat: number; lon: number; categories?: string[] };
+	type Place = {
+		id: string;
+		name: string;
+		lat: number;
+		lon: number;
+		address?: string;
+		categories?: string[];
+	};
 	type Inspection = {
 		venue: string;
 		date: string;
@@ -435,6 +488,35 @@
 		checkedAt: string | null;
 		status: string;
 	};
+
+	function menusFor(message: (typeof chat.messages)[number]): Menu[] {
+		return message.parts.flatMap((part) => {
+			if (part.type !== 'tool-execute' || part.state !== 'output-available') return [];
+			const output = part.output as Menu | null;
+			return output?.kind === 'menu' && Array.isArray(output.items) && output.items.length
+				? [output]
+				: [];
+		});
+	}
+	function toggleDish(menu: Menu, id: string) {
+		if (selectedDishes.some((dish) => dish.id === id)) {
+			selectedDishes = selectedDishes.filter((dish) => dish.id !== id);
+			return;
+		}
+		const item = menu.items.find((dish) => dish.id === id);
+		if (!item || selectedDishes.length >= 12) return;
+		selectedDishes = [
+			...selectedDishes,
+			{
+				id,
+				name: item.name,
+				restaurant: menu.restaurant,
+				area: menu.area,
+				sourceUrl: menu.sourceUrl,
+				selectedAt: new Date().toISOString()
+			}
+		];
+	}
 
 	function placeSearches(message: (typeof chat.messages)[number]) {
 		return message.parts.flatMap((part) => {
@@ -455,19 +537,40 @@
 					Number.isFinite(place?.lat) &&
 					Number.isFinite(place?.lon)
 			);
-			return places.length
-				? [
-						{
-							area:
-								'area' in part.output && typeof part.output.area === 'string'
-									? part.output.area
-									: 'Search area',
-							places
-						}
-					]
-				: [];
+			const area =
+				'area' in part.output && typeof part.output.area === 'string'
+					? part.output.area.trim()
+					: '';
+			const execution = part.input as { input?: { cuisine?: unknown } } | undefined;
+			const requestedCuisine =
+				typeof execution?.input?.cuisine === 'string' ? execution.input.cuisine : undefined;
+			return [
+				{
+					key: area.toLowerCase() || part.toolCallId,
+					area: area || 'Search area',
+					places,
+					requestedCuisine
+				}
+			];
 		});
 	}
+
+	const rollingSearches = $derived.by(() => {
+		const searches = new Map<
+			string,
+			ReturnType<typeof placeSearches>[number] & { messageId: string }
+		>();
+		for (const message of chat.messages) {
+			if (message.role !== 'assistant') continue;
+			for (const search of placeSearches(message)) {
+				searches.set(search.key, {
+					...search,
+					messageId: searches.get(search.key)?.messageId ?? message.id
+				});
+			}
+		}
+		return [...searches.values()];
+	});
 
 	function reservationInspections(message: (typeof chat.messages)[number]): Inspection[] {
 		return message.parts.flatMap((part) => {
@@ -549,7 +652,11 @@
 <main
 	class="flex min-h-0 w-full flex-1 flex-col pb-6 transition-[padding] motion-reduce:transition-none"
 >
-	<div class="mx-auto flex min-h-0 w-full max-w-2xl flex-1 flex-col">
+	<div
+		class="mx-auto flex min-h-0 w-full flex-1 flex-col"
+		class:max-w-2xl={!passportOpen}
+		class:max-w-4xl={passportOpen}
+	>
 		{#if !passportOpen && chat.messages.length}
 			<button
 				type="button"
@@ -559,13 +666,15 @@
 			>
 		{/if}
 		<div
-			class="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto overscroll-contain py-10"
+			class="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto overscroll-contain"
+			class:py-10={!passportOpen}
+			class:py-4={passportOpen}
 			aria-live="polite"
 			onscroll={hideLinkPreview}
 		>
 			{#if historyFailure}<p class="text-sm text-destructive" role="alert">{historyFailure}</p>{/if}
 			{#if passportOpen}
-				<PassportLedger visits={data.visits} atmospheres={data.atmospheres} error={form?.message} />
+				<PassportLedger visits={data.visits} profile={data.profile} error={form?.message} />
 			{:else}
 				{#if hasOlder}<button
 						type="button"
@@ -574,13 +683,13 @@
 						onclick={() => void loadOlder()}>Earlier messages</button
 					>{/if}
 				{#each chat.messages as message (message.id)}
-					{@const searches = placeSearches(message)}
+					{@const searches = rollingSearches.filter(
+						(search) => search.messageId === message.id && search.places.length
+					)}
 					{@const inspections = reservationInspections(message)}
 					{@const checkout = checkoutObservation(message)}
 					{@const followup = message.role === 'assistant' ? followupFor(message) : null}
-					<Message.Root
-						align={message.role === 'user' || followup || inspections.length > 0 ? 'end' : 'start'}
-					>
+					<Message.Root align={message.role === 'user' ? 'end' : 'start'}>
 						<Message.Content class="gap-4">
 							{#if message.parts.some((part) => part.type === 'text' && part.text.trim())}
 								<Bubble.Root variant={message.role === 'user' ? 'secondary' : 'ghost'}>
@@ -604,14 +713,14 @@
 								</Bubble.Root>
 							{/if}
 							{#if followup}
-								<Bubble.Root variant="secondary" class="max-w-md">
+								<Bubble.Root variant="ghost" class="max-w-md">
 									<Bubble.Content>{followup.question}</Bubble.Content>
 								</Bubble.Root>
 							{/if}
 							{#if followup && chat.messages.at(-1)?.id === message.id}
 								<FollowupWidget
 									options={followup.options}
-									calendarView={inspections.length ? undefined : followup.calendarView}
+									calendarView={followup.calendarView}
 									date={followup.date ?? selectedDate ?? undefined}
 									time={followup.time}
 									calendarConnected={data.calendarConnected}
@@ -624,12 +733,21 @@
 									onReply={(answer) => void replyTo(message.id, answer)}
 								/>
 							{/if}
-							{#each message.role === 'assistant' ? searches : [] as search}
+							{#each message.role === 'assistant' ? menusFor(message) : [] as menu}
+								<MenuCard
+									{menu}
+									selectedIds={selectedDishes.map((dish) => dish.id)}
+									disabled={chat.status !== 'ready' || !!data.thread?.pending}
+									onSelect={(id) => toggleDish(menu, id)}
+								/>
+							{/each}
+							{#each searches as search (search.key)}
 								{@const places = search.places}
 								<p class="px-3 text-xs text-primary-foreground/70">{search.area}</p>
 								<div class="mx-3 w-full max-w-xl">
 									<MapWidget
 										{places}
+										requestedCuisine={search.requestedCuisine}
 										token={data.geoapifyMapKey}
 										selectedId={selectedPlace?.id ?? null}
 										onSelect={(place) => {
@@ -645,59 +763,65 @@
 								</div>
 							{/each}
 							{#each message.role === 'assistant' ? inspections : [] as inspection}
-								<div class="w-full max-w-md self-end">
-									<ReservationCalendar
-										{inspection}
-										googleEnabled={data.googleEnabled}
-										calendarConnected={data.calendarConnected}
-										disabled={!data.chatConfigured ||
-											chat.status !== 'ready' ||
-											data.thread?.pending ||
-											chat.messages.at(-1)?.id !== message.id}
-										selectedTime={selectedSlot?.date === inspection.date &&
-										selectedSlot.venue === inspection.venue
-											? selectedSlot.time
-											: null}
-										selectedExperience={selectedSlot?.experience ?? null}
-										onSelectDate={(date) => {
-											if (
+								{#if chat.messages.at(-1)?.id !== message.id || followup?.calendarView}
+									<p class="self-end text-xs text-primary-foreground/60">
+										{inspection.venue} · {inspection.date} · {inspection.partySize} guests · Earlier availability
+										check
+									</p>
+								{:else}
+									<div class="w-full max-w-md self-end">
+										<ReservationCalendar
+											{inspection}
+											googleEnabled={data.googleEnabled}
+											calendarConnected={data.calendarConnected}
+											disabled={!data.chatConfigured ||
 												chat.status !== 'ready' ||
 												data.thread?.pending ||
-												pendingReplyMessageId ||
-												chat.messages.at(-1)?.id !== message.id
-											)
-												return;
-											selectedDate = date;
-											selectedSlot = null;
-											void replyTo(
-												message.id,
-												`Please check ${inspection.venue} for ${inspection.partySize} guests on ${date}.`
-											);
-										}}
-										onSelectTime={(time, experience) => {
-											if (
-												chat.status !== 'ready' ||
-												data.thread?.pending ||
-												pendingReplyMessageId ||
-												chat.messages.at(-1)?.id !== message.id
-											)
-												return;
-											selectedDate = inspection.date;
-											selectedSlot = {
-												venue: inspection.venue,
-												date: inspection.date,
-												partySize: inspection.partySize,
-												time,
-												...(experience ? { experience } : {}),
-												...(inspection.sourceUrl ? { sourceUrl: inspection.sourceUrl } : {})
-											};
-											void replyTo(
-												message.id,
-												`I choose ${inspection.venue} on ${inspection.date} at ${time}${experience ? ` for ${experience}` : ''} for ${inspection.partySize} guests.`
-											);
-										}}
-									/>
-								</div>
+												chat.messages.at(-1)?.id !== message.id}
+											selectedTime={selectedSlot?.date === inspection.date &&
+											selectedSlot.venue === inspection.venue
+												? selectedSlot.time
+												: null}
+											selectedExperience={selectedSlot?.experience ?? null}
+											onSelectDate={(date) => {
+												if (
+													chat.status !== 'ready' ||
+													data.thread?.pending ||
+													pendingReplyMessageId ||
+													chat.messages.at(-1)?.id !== message.id
+												)
+													return;
+												selectedDate = date.length === 10 ? date : null;
+												selectedSlot = null;
+												void replyTo(
+													message.id,
+													date.length === 10
+														? `Please check ${inspection.venue} for ${inspection.partySize} guests on ${date}.`
+														: `I'd like ${inspection.venue} for ${inspection.partySize} guests in ${date}. Help me choose a day.`
+												);
+											}}
+											onSelectTime={(time, experience) => {
+												if (
+													chat.status !== 'ready' ||
+													data.thread?.pending ||
+													pendingReplyMessageId ||
+													chat.messages.at(-1)?.id !== message.id
+												)
+													return;
+												selectedDate = inspection.date;
+												selectedSlot = {
+													venue: inspection.venue,
+													date: inspection.date,
+													partySize: inspection.partySize,
+													time,
+													...(experience ? { experience } : {}),
+													...(inspection.sourceUrl ? { sourceUrl: inspection.sourceUrl } : {})
+												};
+												messageField?.focus();
+											}}
+										/>
+									</div>
+								{/if}
 							{/each}
 							{#if message.role === 'assistant' && checkout}
 								<div
@@ -724,12 +848,16 @@
 					</Message.Root>
 				{:else}
 					<div class="my-auto w-full space-y-5">
-						<p class="mx-auto max-w-2xl text-base text-primary-foreground/80">{welcomePrompt}</p>
+						<p
+							class="mx-auto max-w-2xl text-2xl leading-snug font-medium tracking-tight text-primary-foreground/90 sm:text-3xl"
+						>
+							{welcomePrompt}
+						</p>
 						<div class="scene-rail mx-auto flex w-full max-w-2xl snap-x gap-4 overflow-x-auto pb-2">
 							{#each sceneCards as scene (scene.atmosphere)}
 								<button
 									type="button"
-									class="scene-card w-[46%] flex-none snap-start text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-foreground"
+									class="scene-card w-[38%] max-w-44 flex-none snap-start text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-foreground sm:w-[28%]"
 									onclick={() => {
 										input = `${scene.title}. Help me find a place and check if I can reserve it.`;
 										messageField?.focus();
@@ -744,21 +872,13 @@
 											class="scene-image absolute top-0 -left-[10%] h-full w-[120%] max-w-none object-cover"
 										/>
 									</span>
-									<span
-										class="scene-caption mt-3 block text-base font-medium text-primary-foreground"
+									<span class="scene-caption mt-2 block text-sm font-medium text-primary-foreground"
 										>{sceneTitles[scene.atmosphere]}</span
 									>
 									<span class="sr-only">{scene.detail}</span>
 								</button>
 							{/each}
 						</div>
-						{#if data.googleEnabled && !data.calendarConnected}
-							<form method="post" action="/?/connectCalendar" class="text-center">
-								<button type="submit" class="text-xs underline underline-offset-2"
-									>Connect Google Calendar to check conflicts</button
-								>
-							</form>
-						{/if}
 					</div>
 				{/each}
 				{#if browserSessions.some((session) => session.open)}
@@ -826,90 +946,130 @@
 			{#if form?.message}
 				<p class="mb-3 text-center text-sm text-destructive" role="alert">{form.message}</p>
 			{/if}
-			{#if selectedPlace}
-				<div class="mb-2 flex items-center justify-between px-2 text-xs text-primary-foreground/70">
-					<span>Selected: {selectedPlace.name}</span>
-					<div class="flex items-center gap-3">
-						{#if selectedCuisine}
-							<button
-								type="button"
-								class="underline"
-								aria-pressed={sessionCuisine === selectedCuisine}
-								onclick={() =>
-									(sessionCuisine = sessionCuisine === selectedCuisine ? null : selectedCuisine)}
-								>More {selectedCuisine}{sessionCuisine === selectedCuisine ? ' ✓' : ''}</button
-							>
-						{/if}
-						<button
-							type="button"
-							class="underline"
-							onclick={() => {
-								selectedPlace = null;
-								selectedCuisine = null;
-							}}>Clear</button
-						>
-					</div>
-				</div>
-			{/if}
-			{#if selectedDate}
-				<div class="mb-2 flex items-center justify-between px-2 text-xs text-primary-foreground/70">
-					<span
-						>Selected: {selectedDate}{selectedSlot
-							? ` · ${selectedSlot.venue} at ${selectedSlot.time}${selectedSlot.experience ? ` · ${selectedSlot.experience}` : ''}`
-							: ''}</span
-					>
-					<button
-						type="button"
-						class="underline"
-						onclick={() => {
-							selectedDate = null;
-							selectedSlot = null;
-						}}>Clear</button
-					>
-				</div>
-				{#if selectedSlot?.sourceUrl}
-					<button
-						type="button"
-						class="mb-2 self-end rounded-lg border border-primary-foreground/25 px-3 py-1.5 text-xs hover:bg-primary-foreground/10 disabled:opacity-50"
-						disabled={chat.status !== 'ready' || data.thread?.pending}
-						onclick={() =>
-							void chat.sendMessage({
-								text: 'Continue my selected time to checkout. Stop before entering guest or payment details or submitting.'
-							})}>Continue to checkout</button
-					>
-				{/if}
-			{/if}
 			<form
 				onsubmit={send}
-				class="flex shrink-0 items-end gap-3 rounded-4xl border border-primary-foreground/20 bg-secondary p-3"
+				class="shrink-0 rounded-[1.75rem] bg-secondary/80 p-3 shadow-[0_0_0_1px_rgb(255_255_255/0.08),0_8px_24px_rgb(0_0_0/0.12)] focus-within:ring-1 focus-within:ring-primary-foreground/25"
 			>
-				<label for="message" class="sr-only">Your reservation request</label>
-				<textarea
-					id="message"
-					bind:this={messageField}
-					bind:value={input}
-					enterkeyhint="send"
-					onkeydown={(event) => {
-						if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
-						event.preventDefault();
-						event.currentTarget.form?.requestSubmit();
-					}}
-					rows="2"
-					placeholder={activeFollowup?.question ??
-						'Coffee, brunch, or dinner—where, when, and for how many?'}
-					class="min-h-12 flex-1 resize-none border-0 bg-transparent text-sm text-primary-foreground placeholder:text-primary-foreground/45 focus:ring-0"
-					disabled={!data.chatConfigured}></textarea>
-				<button
-					type="submit"
-					aria-label="Send message"
-					class="flex size-11 shrink-0 items-center justify-center rounded-xl text-primary-foreground transition-colors hover:bg-primary-foreground/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-foreground active:bg-primary-foreground/15 disabled:text-primary-foreground/35 disabled:hover:bg-transparent"
-					disabled={!data.chatConfigured ||
-						!input.trim() ||
-						chat.status !== 'ready' ||
-						data.thread?.pending}
-				>
-					<SFIcon icon="arrow-up" size="md" weight="semibold" />
-				</button>
+				{#if selectedPlace || selectedDate || selectedDishes.length}
+					<div class="mb-3 flex flex-wrap items-center gap-2" aria-label="Selected context">
+						{#each selectedDishes as dish (dish.id)}
+							<button
+								type="button"
+								class="flex min-h-11 max-w-full items-center gap-2 rounded-2xl bg-secondary px-3 text-sm focus-visible:ring-2 focus-visible:ring-ring"
+								aria-label={`Remove ${dish.name} from selected dishes`}
+								onclick={() =>
+									(selectedDishes = selectedDishes.filter((item) => item.id !== dish.id))}
+							>
+								<span class="truncate">{dish.name}</span><span
+									aria-hidden="true"
+									class="text-primary-foreground/55">×</span
+								>
+							</button>
+						{/each}
+						{#if selectedPlace}
+							<div
+								class="inline-flex max-w-full min-w-0 items-center gap-2 rounded-xl bg-primary/50 pl-3 text-xs"
+							>
+								<span class="shrink-0 text-primary-foreground/50"
+									><SFIcon icon="mappin" size="sm" /></span
+								>
+								<span class="truncate" title={selectedPlace.name}>{selectedPlace.name}</span>
+								<button
+									type="button"
+									aria-label="Clear selected place"
+									class="flex size-11 shrink-0 items-center justify-center rounded-xl text-primary-foreground/45 hover:bg-primary-foreground/10 hover:text-primary-foreground focus-visible:outline-2 focus-visible:outline-ring"
+									onclick={() => {
+										selectedPlace = null;
+										selectedCuisine = null;
+									}}><SFIcon icon="xmark" size="sm" /></button
+								>
+							</div>
+							{#if selectedCuisine}
+								<button
+									type="button"
+									class="min-h-11 rounded-xl px-3 text-xs text-primary-foreground/65 transition-colors hover:bg-primary-foreground/5 focus-visible:outline-2 focus-visible:outline-ring aria-pressed:bg-primary-foreground/10 aria-pressed:text-primary-foreground"
+									aria-pressed={sessionCuisine === selectedCuisine}
+									onclick={() =>
+										(sessionCuisine = sessionCuisine === selectedCuisine ? null : selectedCuisine)}
+									>More {selectedCuisine}{sessionCuisine === selectedCuisine ? ' ✓' : ''}</button
+								>
+							{/if}
+						{/if}
+						{#if selectedDate}
+							<div
+								class="inline-flex max-w-full min-w-0 items-center gap-2 rounded-xl bg-primary/50 pl-3 text-xs"
+							>
+								<span class="shrink-0 text-primary-foreground/50"
+									><SFIcon icon="calendar" size="sm" /></span
+								>
+								<span class="min-w-0 py-2">
+									<time datetime={selectedDate}
+										>{new Date(`${selectedDate}T12:00:00`).toLocaleDateString('en-US', {
+											month: 'short',
+											day: 'numeric'
+										})}</time
+									>{#if selectedSlot}<span class="text-primary-foreground/55">
+											·
+										</span>{selectedSlot.time}<span
+											class="block max-w-64 truncate text-primary-foreground/50"
+											title={selectedSlot.venue}
+											>{selectedSlot.venue}{selectedSlot.experience
+												? ` · ${selectedSlot.experience}`
+												: ''}</span
+										>{/if}
+								</span>
+								<button
+									type="button"
+									aria-label="Clear selected date and time"
+									class="flex size-11 shrink-0 items-center justify-center rounded-xl text-primary-foreground/45 hover:bg-primary-foreground/10 hover:text-primary-foreground focus-visible:outline-2 focus-visible:outline-ring"
+									onclick={() => {
+										selectedDate = null;
+										selectedSlot = null;
+									}}><SFIcon icon="xmark" size="sm" /></button
+								>
+							</div>
+							{#if selectedSlot?.sourceUrl}
+								<button
+									type="button"
+									class="ml-auto inline-flex min-h-11 items-center gap-2 rounded-xl px-3 text-xs font-medium hover:bg-primary-foreground/10 focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50"
+									disabled={chat.status !== 'ready' || data.thread?.pending}
+									onclick={() =>
+										void chat.sendMessage({
+											text: 'Continue my selected time to checkout. Stop before entering guest or payment details or submitting.'
+										})}>Continue to checkout <SFIcon icon="arrow-up-right" size="sm" /></button
+								>
+							{/if}
+						{/if}
+					</div>
+				{/if}
+				<div class="flex items-end gap-3">
+					<label for="message" class="sr-only">Your reservation request</label>
+					<textarea
+						id="message"
+						bind:this={messageField}
+						bind:value={input}
+						enterkeyhint="send"
+						onkeydown={(event) => {
+							if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
+							event.preventDefault();
+							event.currentTarget.form?.requestSubmit();
+						}}
+						rows="2"
+						placeholder={activeFollowup ? 'Type your reply…' : 'What are you planning?'}
+						class="min-h-12 flex-1 resize-none border-0 bg-transparent text-sm text-primary-foreground placeholder:text-primary-foreground/45 focus:ring-0"
+						disabled={!data.chatConfigured}></textarea>
+					<button
+						type="submit"
+						aria-label="Send message"
+						class="flex size-11 shrink-0 items-center justify-center rounded-xl text-primary-foreground transition-colors hover:bg-primary-foreground/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-foreground active:bg-primary-foreground/15 disabled:text-primary-foreground/35 disabled:hover:bg-transparent"
+						disabled={!data.chatConfigured ||
+							!input.trim() ||
+							chat.status !== 'ready' ||
+							data.thread?.pending}
+					>
+						<SFIcon icon="arrow-up" size="md" weight="semibold" />
+					</button>
+				</div>
 			</form>
 		{/if}
 	</div>
