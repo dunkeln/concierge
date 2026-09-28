@@ -1,17 +1,17 @@
 import { env } from '$env/dynamic/private';
 import * as Sentry from '@sentry/sveltekit';
 import { findReservationPages, prepareReservation } from './reservations';
+import { rankPlaces } from './profile/rank';
+
+type SearchContext = { preferredCuisines: string[] };
 
 type Capability = {
 	description: string;
 	input: Record<string, string>;
 	run: (
 		input: Record<string, unknown>,
-		onBrowserSession?: (event: {
-			state: 'open' | 'closed';
-			id: string;
-			venue: string;
-		}) => Promise<void>
+		onBrowserSession?: (event: { open: boolean; id: string; venue: string }) => Promise<void>,
+		context?: SearchContext
 	) => unknown | Promise<unknown>;
 };
 
@@ -20,6 +20,9 @@ type GeoapifyArea = {
 	suburb?: string;
 	district?: string;
 	city?: string;
+	state?: string;
+	state_code?: string;
+	country?: string;
 	formatted?: string;
 	place_id?: string;
 	lat?: number;
@@ -53,10 +56,19 @@ function matchesArea(query: string, area: GeoapifyArea) {
 			.trim();
 	const [place, context] = query.split(',');
 	return (
-		[area.name, area.suburb, area.district, area.city, area.formatted?.split(',')[0]].some(
-			(value) => value && normalize(value) === normalize(place)
-		) &&
-		(!context || normalize(area.formatted ?? '').includes(normalize(context)))
+		[
+			area.name,
+			area.suburb,
+			area.district,
+			area.city,
+			area.formatted?.split(',')[0],
+			area.suburb && area.city ? `${area.suburb} ${area.city}` : undefined
+		].some((value) => value && normalize(value) === normalize(place)) &&
+		(!context ||
+			normalize(area.formatted ?? '').includes(normalize(context)) ||
+			[area.state, area.state_code, area.country].some(
+				(value) => value && normalize(value) === normalize(context)
+			))
 	);
 }
 
@@ -64,8 +76,16 @@ async function resolveArea(name: string) {
 	const key = name.toLocaleLowerCase();
 	const cached = areaCache.get(key);
 	if (cached) return cached;
+	const [place, city, ...rest] = name.split(',').map((part) => part.trim());
+	const repeatedCity = city && place.toLowerCase().endsWith(` ${city.toLowerCase()}`);
+	const downtownCalifornia = /^downtown (.+),\s*(?:california|ca)$/i.exec(name);
+	const query = repeatedCity
+		? [place.slice(0, -city.length).trim(), city, ...rest].join(', ')
+		: downtownCalifornia
+			? `${place}, ${downtownCalifornia[1]}, California`
+			: name;
 	const url = new URL('https://api.geoapify.com/v1/geocode/search');
-	url.searchParams.set('text', name);
+	url.searchParams.set('text', query);
 	url.searchParams.set('format', 'json');
 	url.searchParams.set('limit', '5');
 	const data = (await geoapifyJson(url, 'geoapify.geocode')) as { results?: GeoapifyArea[] };
@@ -75,9 +95,9 @@ async function resolveArea(name: string) {
 			Number.isFinite(result.lat) &&
 			Number.isFinite(result.lon) &&
 			['suburb', 'district', 'city', 'locality'].includes(result.result_type ?? '') &&
-			matchesArea(name, result)
+			matchesArea(query, result)
 	);
-	const requested = name.split(',')[0].toLowerCase();
+	const requested = query.split(',')[0].toLowerCase();
 	const area =
 		matches?.find((result) => result.formatted?.toLowerCase().startsWith(`${requested},`)) ??
 		matches?.[0];
@@ -88,7 +108,11 @@ async function resolveArea(name: string) {
 	return area;
 }
 
-async function geoapifySearch(area: unknown, kind: unknown = 'restaurant') {
+async function geoapifySearch(
+	area: unknown,
+	kind: unknown = 'restaurant',
+	options: { venue?: unknown; cuisine?: unknown; preferredCuisines?: string[] } = {}
+) {
 	if (typeof area !== 'string' || area.trim().length < 3 || area.length > 100) {
 		return { error: 'Provide a neighborhood or city name (up to 100 characters).' };
 	}
@@ -99,6 +123,13 @@ async function geoapifySearch(area: unknown, kind: unknown = 'restaurant') {
 	if (kind !== 'restaurant' && kind !== 'cafe') {
 		return { error: 'Choose restaurant or cafe.' };
 	}
+	if (
+		(options.venue !== undefined &&
+			(typeof options.venue !== 'string' || options.venue.length > 100)) ||
+		(options.cuisine !== undefined &&
+			(typeof options.cuisine !== 'string' || options.cuisine.length > 40))
+	)
+		return { error: 'Provide a short venue or cuisine name.' };
 	if (!env.GEOAPIFY_API_KEY) return { error: 'Place search is not configured.' };
 
 	try {
@@ -128,15 +159,28 @@ async function geoapifySearch(area: unknown, kind: unknown = 'restaurant') {
 			)
 				return [];
 			return [
-				{ id, name: placeName, address, categories, lon: coordinates[0], lat: coordinates[1] }
+				{
+					id,
+					name: placeName,
+					address,
+					categories: categories ?? [],
+					lon: coordinates[0],
+					lat: coordinates[1]
+				}
 			];
 		});
 		Sentry.getActiveSpan()?.setAttribute('places.result_count', places.length);
+		// Geoapify's proximity order is discovery order, not a measure of request fit or taste.
+		const ranked = rankPlaces(places, {
+			venue: options.venue as string | undefined,
+			cuisine: options.cuisine as string | undefined,
+			preferredCuisines: options.preferredCuisines
+		});
 		return {
 			area: location.formatted ?? name,
-			places,
+			places: ranked,
 			attribution: '© OpenStreetMap contributors via Geoapify',
-			availability: 'Not provided by Geoapify'
+			placeListingsIncludeAvailability: false
 		};
 	} catch {
 		Sentry.getActiveSpan()?.setAttribute('outcome', 'place_search_error');
@@ -148,12 +192,17 @@ async function geoapifySearch(area: unknown, kind: unknown = 'restaurant') {
 export const capabilities: Record<string, Capability> = {
 	followup: {
 		description:
-			'Ask the user for missing information and end this turn. Render a reply field, with optional short choices. Do not use for facts you can find with another capability.',
+			'Ask the user for missing information and end this turn. The footer accepts replies; supply short answer choices for non-calendar questions and an explicit responseType. Do not use for facts you can find with another capability.',
 		input: {
 			question: 'One concise question for the user',
-			options: 'Optional array of up to four short answer choices; free text is always available'
+			responseType: 'text, partySize, date, or time: the missing detail this question asks for',
+			options: 'Optional array of up to four short answer choices; free text is always available',
+			calendarView:
+				'Missing calendar detail: month if month is unknown, day if month is known but day is unknown, time if date is known but time is unknown. Shows only that picker; pass known date/time as presets.',
+			date: 'Known YYYY-MM-DD date from the conversation to open the calendar on',
+			time: 'Known local HH:mm time from the conversation to prefill the calendar'
 		},
-		run: ({ question, options }) => {
+		run: ({ question, responseType = 'text', options, calendarView, date, time }) => {
 			if (typeof question !== 'string' || !question.trim() || question.length > 300)
 				return { error: 'Provide one question of at most 300 characters.' };
 			if (
@@ -165,60 +214,130 @@ export const capabilities: Record<string, Capability> = {
 					))
 			)
 				return { error: 'Provide up to four short answer choices.' };
-			return { kind: 'followup', question: question.trim(), options: options ?? [] };
+			if (!['text', 'partySize', 'date', 'time'].includes(String(responseType)))
+				return { error: 'Choose text, partySize, date, or time as responseType.' };
+			if (calendarView !== undefined && !['date', 'time'].includes(String(responseType)))
+				return { error: 'Calendars are only available for date or time questions.' };
+			if (calendarView !== undefined && !['month', 'day', 'time'].includes(String(calendarView)))
+				return { error: 'Choose month, day, or time for the calendar.' };
+			if (
+				calendarView !== undefined &&
+				((responseType === 'time' && calendarView !== 'time') ||
+					(responseType === 'date' && calendarView === 'time'))
+			)
+				return { error: 'Use time for time questions, or month/day for date questions.' };
+			if (calendarView === 'time' && date === undefined)
+				return { error: 'Provide the known date before asking for its time.' };
+			if (
+				date !== undefined &&
+				(typeof date !== 'string' ||
+					!/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+					!Number.isFinite(Date.parse(`${date}T00:00:00Z`)) ||
+					new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date)
+			)
+				return { error: 'Provide a valid calendar date.' };
+			if (
+				time !== undefined &&
+				(typeof time !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time))
+			)
+				return { error: 'Provide a valid HH:mm calendar time.' };
+			return {
+				kind: 'followup',
+				question: question.trim(),
+				responseType,
+				options: options?.length
+					? options
+					: responseType === 'partySize'
+						? ['1 guest', '2 guests', '4 guests', '6 guests']
+						: [],
+				...(calendarView ? { calendarView } : {}),
+				...(date ? { date } : {}),
+				...(time ? { time } : {})
+			};
 		}
 	},
 	'reservations.prepare': {
 		description:
-			'Recheck the user-selected SevenRooms time and advance to provider checkout. Stops before guest details, payment, or final booking submission. Only available after the user chooses Continue to checkout.',
+			'Recheck the user-selected time on its reservation page and advance to checkout. Stops before guest details, payment, or final booking submission. Only available after the user chooses Continue to checkout.',
 		input: {
 			venue: 'Selected venue',
 			date: 'Selected YYYY-MM-DD date',
 			partySize: 'Selected guest count',
 			time: 'Selected time',
-			experience: 'Selected SevenRooms experience, if the time appears under more than one',
-			sourceUrl: 'SevenRooms page from the verified search result'
+			experience: 'Selected seating experience, if the time appears under more than one',
+			sourceUrl: 'Reservation page from the verified search result'
 		},
 		run: (input) =>
 			prepareReservation(input as Parameters<typeof prepareReservation>[0], env.BROWSERBASE_API_KEY)
 	},
 	'reservations.find': {
 		description:
-			'Find nearby restaurants or cafés in a public area and their reservation pages in one call. A matching SevenRooms page may show expanded times for a specified date and party size. Place listings and other booking links are not verified availability. Call separately for each stop in a multi-stop plan. No booking is made.',
+			'Find restaurants or cafés and inspect their reservation pages in a browser, across booking providers. Reuse the venue, area, and sourceUrl from this conversation; a prior booking link takes precedence over new search. With date and partySize, the browser sets and verifies filters and reads visible times. Include startTime/endTime for a window plus 30 minutes nearby. Report observed blocks or incomplete inspection; links alone do not prove availability. Call separately for each reservation stop. No booking is made.',
 		input: {
 			restaurant: 'Restaurant or café name from places.search, if known',
 			area: 'Public neighborhood and city, such as West Village, New York City',
+			sourceUrl:
+				'Optional public HTTPS reservation link from this conversation; inspect this destination first',
+			bookingProvider:
+				'Optional booking provider requested by the user; otherwise search across providers',
 			kind: 'restaurant or cafe; defaults to restaurant',
+			cuisine:
+				'Optional cuisine explicitly requested by the user; used only when supported by a place category',
 			date: 'Optional requested date as YYYY-MM-DD',
-			partySize: 'Optional number of guests, 1–12'
+			partySize: 'Optional number of guests, 1–12',
+			startTime: 'Optional requested window start, local 24-hour HH:mm; provide with endTime',
+			endTime:
+				'Optional requested window end, local 24-hour HH:mm; exact provider times within 30 minutes on either side are shown',
+			calendarView: 'Optional month, day, or time view for the reservation calendar'
 		},
-		run: async (input, onBrowserSession) => {
+		run: async (input, onBrowserSession, context) => {
+			if (
+				input.calendarView !== undefined &&
+				!['month', 'day', 'time'].includes(String(input.calendarView))
+			)
+				return { error: 'Choose month, day, or time for the calendar.' };
 			const [reservation, discovery] = await Promise.all([
 				findReservationPages(input, { browserbase: env.BROWSERBASE_API_KEY }, onBrowserSession),
-				input.area ? geoapifySearch(input.area, input.kind) : null
+				input.area
+					? geoapifySearch(input.area, input.kind, {
+							venue: input.restaurant,
+							cuisine: input.cuisine,
+							preferredCuisines: context?.preferredCuisines
+						})
+					: null
 			]);
 			return discovery && 'places' in discovery
 				? {
 						...reservation,
+						...(input.calendarView ? { calendarView: input.calendarView } : {}),
 						area: discovery.area,
 						places: discovery.places,
 						attribution: discovery.attribution,
-						placeCoverage: 'Nearby candidates only; reservation inventory is checked separately.'
+						placeListingsIncludeAvailability: false
 					}
 				: {
 						...reservation,
+						...(input.calendarView ? { calendarView: input.calendarView } : {}),
 						...(discovery && 'error' in discovery ? { placeSearchError: discovery.error } : {})
 					};
 		}
 	},
 	'places.search': {
 		description:
-			'Find restaurants or cafés inside a named neighborhood or city using Geoapify. Call once for each distinct area; each result belongs only to its resolved area. Does not show reservation availability.',
+			'Find restaurants or cafés inside a named neighborhood or city. Call once for each distinct area; each result belongs only to its resolved area. Does not show reservation availability.',
 		input: {
 			area: 'Public neighborhood and city, such as West Village, New York City; no private addresses',
-			kind: 'restaurant or cafe; defaults to restaurant'
+			kind: 'restaurant or cafe; defaults to restaurant',
+			restaurant: 'Optional exact venue name to prioritize',
+			cuisine:
+				'Optional cuisine explicitly requested by the user; used only when supported by a place category'
 		},
-		run: ({ area, kind }) => geoapifySearch(area, kind)
+		run: ({ area, kind, restaurant, cuisine }, _onBrowserSession, context) =>
+			geoapifySearch(area, kind, {
+				venue: restaurant,
+				cuisine,
+				preferredCuisines: context?.preferredCuisines
+			})
 	},
 	'clock.now': {
 		description: 'Get the current date and time in an IANA timezone.',
@@ -290,6 +409,7 @@ export const capabilities: Record<string, Capability> = {
 					unit: data.temperature!.unit,
 					condition: data.weatherCondition?.description?.text,
 					observedAt: data.currentTime,
+					checkedAt: new Date().toISOString(),
 					attribution: 'Source: Includes weather data from Google'
 				};
 			} catch {

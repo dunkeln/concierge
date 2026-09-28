@@ -15,6 +15,9 @@ import {
 } from 'ai';
 import intakeStage from '$lib/server/stages/intake.md?raw';
 import { capabilities } from '$lib/server/capabilities';
+import { loadDiningContext } from '$lib/server/profile/context';
+import { cuisines } from '$lib/onboarding';
+import { isFresh, RESERVATION_TTL_MS, WEATHER_TTL_MS } from '$lib/freshness';
 import type { RequestHandler } from './$types';
 
 const stage = /^---\r?\nmodel: ([^\r\n]+)\r?\n---\r?\n([\s\S]+)$/.exec(intakeStage);
@@ -24,13 +27,25 @@ if (!stage || !allowedModels.has(stage[1]) || !stage[2].trim()) {
 }
 const [, modelId, system] = stage;
 
+function publicStreamError(streamError: unknown): string {
+	const status =
+		typeof streamError === 'object' && streamError !== null && 'statusCode' in streamError
+			? streamError.statusCode
+			: undefined;
+	if (status === 429) return 'The model is busy. Please retry shortly.';
+	if (status === 402) return 'The model service has no available credits.';
+	if (typeof status === 'number' && status >= 500)
+		return 'The model service is unavailable. Please retry.';
+	return 'The assistant stopped before finishing. Please retry.';
+}
+
 export const POST: RequestHandler = async ({ request, locals }) => {
 	if (!locals.user) error(401, 'Sign in to chat.');
 	const userId = locals.user.id;
 	if (!env.OPENROUTER_API_KEY) return json({ error: 'Chat is not configured.' }, { status: 503 });
 
 	const raw = await request.text();
-	if (raw.length > 32_000) error(413, 'Conversation is too long.');
+	if (raw.length > 128_000) error(413, 'Conversation is too long.');
 
 	let payload: unknown;
 	try {
@@ -65,6 +80,14 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		error(400, 'Invalid conversation.');
 	}
 	const selection = (payload as { selectedPlace?: unknown }).selectedPlace;
+	const requestedPreference = (payload as { preferredCuisine?: unknown }).preferredCuisine;
+	if (
+		requestedPreference != null &&
+		(typeof requestedPreference !== 'string' ||
+			!cuisines.includes(requestedPreference as (typeof cuisines)[number]))
+	)
+		error(400, 'Invalid preference.');
+	const sessionCuisine = requestedPreference as string | null | undefined;
 	let selectedPlace: { id: string; name: string; area: string } | null = null;
 	if (selection != null) {
 		if (typeof selection !== 'object' || Array.isArray(selection)) error(400, 'Invalid place.');
@@ -123,7 +146,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			!/^\d{1,2}:\d{2} [AP]M$/.test(time) ||
 			(experience !== undefined &&
 				(typeof experience !== 'string' || !experience.trim() || experience.length > 100)) ||
-			(sourceUrl !== undefined && (typeof sourceUrl !== 'string' || sourceUrl.length > 500))
+			(sourceUrl !== undefined && (typeof sourceUrl !== 'string' || sourceUrl.length > 2_000))
 		)
 			error(400, 'Invalid time.');
 		selectedSlot = {
@@ -145,6 +168,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 					part.text ===
 						'Continue my selected time to checkout. Stop before entering guest or payment details or submitting.'
 			);
+	const diningContext = await loadDiningContext(userId, sessionCuisine);
 
 	const openrouter = createOpenAI({
 		apiKey: env.OPENROUTER_API_KEY,
@@ -164,6 +188,169 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			})
 		}))
 		.filter((message) => message.parts.length);
+	const recentFindings = validated.data
+		.slice(0, -1)
+		.flatMap((message) =>
+			message.role === 'assistant'
+				? message.parts.flatMap<Record<string, unknown>>((part) => {
+						if (part.type !== 'tool-execute' || part.state !== 'output-available') return [];
+						const output = part.output as Record<string, unknown> | null;
+						if (!output || typeof output !== 'object') return [];
+						const references: Record<string, unknown>[] = [];
+						if (typeof output.area === 'string' && Array.isArray(output.places)) {
+							references.push({
+								area: output.area.slice(0, 200),
+								source: 'mapped place listing',
+								places: output.places.slice(0, 25).flatMap((place: unknown) => {
+									if (!place || typeof place !== 'object') return [];
+									const { name, address, categories, lat, lon } = place as Record<string, unknown>;
+									if (
+										typeof name !== 'string' ||
+										typeof lat !== 'number' ||
+										!Number.isFinite(lat) ||
+										typeof lon !== 'number' ||
+										!Number.isFinite(lon)
+									)
+										return [];
+									return [
+										{
+											name: name.slice(0, 100),
+											...(typeof address === 'string' ? { address: address.slice(0, 200) } : {}),
+											categories: Array.isArray(categories)
+												? categories
+														.filter((value): value is string => typeof value === 'string')
+														.slice(0, 8)
+												: [],
+											lat,
+											lon
+										}
+									];
+								})
+							});
+						}
+						if (
+							Array.isArray(output.pages) &&
+							output.request &&
+							typeof output.request === 'object'
+						) {
+							references.push({
+								provider: 'reservation page search',
+								request: {
+									venue:
+										typeof (output.request as Record<string, unknown>).venue === 'string'
+											? String((output.request as Record<string, unknown>).venue).slice(0, 100)
+											: '',
+									date:
+										typeof (output.request as Record<string, unknown>).date === 'string'
+											? String((output.request as Record<string, unknown>).date).slice(0, 10)
+											: null,
+									partySize:
+										typeof (output.request as Record<string, unknown>).partySize === 'number'
+											? (output.request as Record<string, unknown>).partySize
+											: null
+								},
+								pages: output.pages.slice(0, 5).flatMap((page: unknown) => {
+									if (!page || typeof page !== 'object') return [];
+									const { title, url } = page as Record<string, unknown>;
+									return typeof title === 'string' && typeof url === 'string'
+										? [{ title: title.slice(0, 150), url: url.slice(0, 2_000) }]
+										: [];
+								})
+							});
+						}
+						return references;
+					})
+				: []
+		)
+		.slice(-2);
+	const timedFindings = validated.data
+		.slice(0, -1)
+		.flatMap((message) =>
+			message.role === 'assistant'
+				? message.parts.flatMap<{
+						kind: string;
+						checkedAt: string;
+						fresh: boolean;
+						reference: Record<string, unknown>;
+						value: Record<string, unknown>;
+					}>((part) => {
+						if (part.type !== 'tool-execute' || part.state !== 'output-available') return [];
+						const output = part.output as Record<string, unknown> | null;
+						if (!output || typeof output !== 'object') return [];
+						if (
+							typeof output.temperature === 'number' &&
+							Number.isFinite(output.temperature) &&
+							typeof output.checkedAt === 'string'
+						) {
+							return [
+								{
+									kind: 'weather',
+									checkedAt: output.checkedAt,
+									fresh:
+										isFresh(output.checkedAt, WEATHER_TTL_MS) &&
+										isFresh(output.observedAt, 20 * 60_000),
+									reference: {
+										latitude: typeof output.latitude === 'number' ? output.latitude : null,
+										longitude: typeof output.longitude === 'number' ? output.longitude : null
+									},
+									value: {
+										temperature: output.temperature,
+										unit: typeof output.unit === 'string' ? output.unit.slice(0, 20) : null,
+										condition:
+											typeof output.condition === 'string' ? output.condition.slice(0, 100) : null,
+										observedAt:
+											typeof output.observedAt === 'string' ? output.observedAt.slice(0, 40) : null
+									}
+								}
+							];
+						}
+						const inspection = output.inspection as Record<string, unknown> | undefined;
+						if (inspection && typeof inspection.checkedAt === 'string') {
+							const request = output.request as Record<string, unknown> | undefined;
+							return [
+								{
+									kind: 'reservation',
+									checkedAt: inspection.checkedAt,
+									fresh: isFresh(inspection.checkedAt, RESERVATION_TTL_MS),
+									reference: {
+										venue: typeof request?.venue === 'string' ? request.venue.slice(0, 100) : null,
+										date: typeof request?.date === 'string' ? request.date.slice(0, 10) : null,
+										partySize: typeof request?.partySize === 'number' ? request.partySize : null
+									},
+									value: {
+										visibleTimes: Array.isArray(inspection.visibleTimes)
+											? inspection.visibleTimes
+													.filter(
+														(time): time is string =>
+															typeof time === 'string' && /^\d{1,2}:\d{2} [AP]M$/.test(time)
+													)
+													.slice(0, 24)
+											: [],
+										complete: inspection.complete === true
+									}
+								}
+							];
+						}
+						return [];
+					})
+				: []
+		)
+		.slice(-3)
+		.map(({ kind, checkedAt, fresh, reference, value }) =>
+			fresh ? { kind, checkedAt, reference, value } : { kind, checkedAt, reference, expired: true }
+		);
+	if (recentFindings.length) {
+		history.at(-1)?.parts.push({
+			type: 'text',
+			text: `Earlier search context (replayed by the client, so use only to resolve references; recheck before asserting facts or taking action): ${JSON.stringify(recentFindings)}`
+		});
+	}
+	if (timedFindings.length) {
+		history.at(-1)?.parts.push({
+			type: 'text',
+			text: `Prior time-sensitive observations (client replay, not authoritative): ${JSON.stringify(timedFindings)}. Omitted expired values are historical even if earlier assistant text mentions them; fetch them again before describing current conditions or times. Recheck reservation times at checkout.`
+		});
+	}
 	if (selectedPlace) {
 		history.at(-1)?.parts.push({
 			type: 'text',
@@ -182,11 +369,15 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			text: `Selected time in the interface: ${JSON.stringify(selectedSlot)}. This is the user's choice from an earlier result, not a live hold or booking.`
 		});
 	}
+	if (diningContext.modelContext) {
+		history.at(-1)?.parts.push({ type: 'text', text: diningContext.modelContext });
+	}
 	const modelMessages = await convertToModelMessages(history);
 	const discovered = new Set<string>();
 	let awaitingFollowup = false;
 	let emitBrowserSession:
-		((event: { state: 'open' | 'closed'; id: string; venue: string }) => Promise<void>) | undefined;
+		| ((event: { open: boolean; id: string; venue: string; pageId?: string }) => Promise<void>)
+		| undefined;
 	return Sentry.startSpanManual({ name: 'chat.intake', op: 'ai.stream' }, async (span, finish) => {
 		const modelSpans = new Map<string, ReturnType<typeof Sentry.startInactiveSpan>>();
 		const endTrace = () => {
@@ -241,11 +432,12 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 							if (
 								outcome.status !== 'checkout_ready' ||
 								typeof outcome.sessionId !== 'string' ||
+								typeof outcome.pageId !== 'string' ||
 								typeof outcome.expiresAt !== 'number'
 							)
 								return outcome;
-							const { sessionId, expiresAt, ...observation } = outcome;
-							const ticket = await new SignJWT({ sid: sessionId })
+							const { sessionId, pageId, expiresAt, ...observation } = outcome;
+							const ticket = await new SignJWT({ sid: sessionId, pid: pageId })
 								.setProtectedHeader({ alg: 'HS256' })
 								.setSubject(userId)
 								.setExpirationTime(expiresAt)
@@ -254,10 +446,15 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 						}
 						const outcome = await Sentry.startSpan(
 							{ name: `capability.${name}`, op: 'agent.tool' },
-							() =>
+							async () =>
 								capabilities[name].run(
 									input,
-									name === 'reservations.find' ? emitBrowserSession : undefined
+									name === 'reservations.find' ? emitBrowserSession : undefined,
+									name === 'places.search' || name === 'reservations.find'
+										? {
+												preferredCuisines: diningContext.rankingCuisines
+											}
+										: undefined
 								)
 						);
 						if (name === 'followup' && (outcome as { kind?: string })?.kind === 'followup')
@@ -316,24 +513,25 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 
 		return createUIMessageStreamResponse({
 			stream: createUIMessageStream({
+				onError: publicStreamError,
 				execute({ writer }) {
-					emitBrowserSession = async ({ state, id, venue }) => {
-						if (state === 'closed') {
-							writer.write({ type: 'data-browser', data: { state, id }, transient: true });
+					emitBrowserSession = async ({ open, id, venue, pageId }) => {
+						if (!open) {
+							writer.write({ type: 'data-browser', data: { open, id }, transient: true });
 							return;
 						}
-						const ticket = await new SignJWT({ sid: id, scope: 'preview' })
+						const ticket = await new SignJWT({ sid: id, pid: pageId, scope: 'preview' })
 							.setProtectedHeader({ alg: 'HS256' })
 							.setSubject(userId)
 							.setExpirationTime(Math.floor(Date.now() / 1_000) + 120)
 							.sign(new TextEncoder().encode(env.BETTER_AUTH_SECRET));
 						writer.write({
 							type: 'data-browser',
-							data: { state, id, venue, viewPath: `/api/reservations/view?ticket=${ticket}` },
+							data: { open, id, venue, viewPath: `/api/reservations/view?ticket=${ticket}` },
 							transient: true
 						});
 					};
-					writer.merge(result.toUIMessageStream());
+					writer.merge(result.toUIMessageStream({ onError: publicStreamError }));
 				}
 			})
 		});

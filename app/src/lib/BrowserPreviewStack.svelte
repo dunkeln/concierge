@@ -151,7 +151,7 @@
 		height: 632px;
 		border: 0;
 		pointer-events: none;
-		transform: scale(0.16) translateY(-32px);
+		transform: scale(0.16);
 		transform-origin: top left;
 	}
 	.preview-open {
@@ -238,13 +238,10 @@
 		}
 	}
 	.preview-window iframe {
-		/* ponytail: crop Browserbase's debugger bar; use a raw screencast if provider layouts vary. */
 		width: 100%;
-		height: calc(100% + 2rem);
+		height: 100%;
 		border: 0;
 		pointer-events: none;
-		transform: translateY(-2rem) scale(1.25);
-		transform-origin: center top;
 	}
 	.preview-close {
 		position: absolute;

@@ -45,6 +45,7 @@ export const auth = betterAuth({
 	baseURL,
 	secret: env.BETTER_AUTH_SECRET,
 	database: drizzleAdapter(db, { provider: 'pg' }),
+	session: { cookieCache: { enabled: true, maxAge: 60 } },
 	emailAndPassword: { enabled: true },
 	account: { encryptOAuthTokens: true, accountLinking: { allowDifferentEmails: true } },
 	...(appleEnabled && { trustedOrigins: ['https://appleid.apple.com'] }),

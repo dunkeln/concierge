@@ -15,10 +15,18 @@ export const GET: RequestHandler = async ({ locals, url }) => {
 		});
 		if (payload.sub !== locals.user.id || typeof payload.sid !== 'string')
 			error(403, 'Checkout view is unavailable.');
-		const { debuggerFullscreenUrl } = await new Browserbase({
+		const views = await new Browserbase({
 			apiKey: env.BROWSERBASE_API_KEY
 		}).sessions.debug(payload.sid, payload.scope === 'preview' ? { expiresIn: 120 } : undefined);
-		const destination = new URL(debuggerFullscreenUrl);
+		if (payload.scope === 'preview' && typeof payload.pid !== 'string')
+			throw new Error('Preview page is missing');
+		const liveView =
+			typeof payload.pid === 'string'
+				? views.pages.find((page) => page.id === payload.pid)?.debuggerFullscreenUrl
+				: views.debuggerFullscreenUrl;
+		if (!liveView) throw new Error('Live view page is unavailable');
+		const destination = new URL(liveView);
+		if (payload.scope === 'preview') destination.searchParams.set('navbar', 'false');
 		if (destination.protocol !== 'https:' || !/(^|\.)browserbase\.com$/.test(destination.hostname))
 			throw new Error('Invalid live view URL');
 		return new Response(null, {

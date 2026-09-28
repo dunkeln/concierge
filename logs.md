@@ -15,6 +15,96 @@ Record a new entry only when a failure or limitation is observed and useful to r
 
 ## Entries
 
+### 2026-09-27 — Area reservation search stopped before a named-venue check
+
+- Evidence: The [Sentry trace](https://concierge-vn.sentry.io/explore/traces/trace/103b1071632c4f4a8099c45ba48913aa) captured a downtown San Mateo request for tomorrow at 6 pm, followed by four guests. Luna executed `reservations.find` with area, September 28, party size four, and 18:00, but no restaurant. It then recommended Izakaya Ginji with an OpenTable link and unverified times. The 63 chat spans show one reservation search, Browserbase page search, and no browser inspection. Search took 3.80 seconds; the reply turn took 8.71 seconds. The user reports that opening the link showed reservations; those slots were not captured here.
+- Cause: The agent stopped after area discovery despite the prompt asking for a named-venue check before concluding times are unknown. Separately, `findReservationPages` launches inspection only for an exact SevenRooms venue; a Browserbase search key does not expose a general browser capability to the model. OpenTable remains outside the implemented inspection path. No inspection was attempted, so this trace does not show a browser failure or blocked provider.
+- Change: Added this real turn and its source conversation/span IDs to the existing frozen Braintrust snapshots. Added `namedVenueChecked`, applicable only to captures annotated with a candidate and known date/party. No app behavior or provider coverage was changed.
+- Verification: Local and [Braintrust snapshot scoring](https://www.braintrust.dev/app/whentor/p/Concierge/experiments/observed-reservation-snapshots-2e52f857) completed with zero model or provider calls. This case scored 0% on `namedVenueChecked` and passed tool-access truthfulness. Other captures are not applicable to the new score. This measures follow-through on a named candidate, not browser availability or completed booking; adding a case changes the cohort and is not evidence of improvement.
+- Remaining limit: Captured model request messages are truncated. Tool arguments and final prose are recovered from individual model outputs; provider results are not fully captured. A stronger model cannot remove the SevenRooms-only adapter gate.
+
+### 2026-09-27 — San Mateo venue lookup failed and the agent denied its browser capability
+
+- Evidence: In a local chat, the user selected Izakaya Ginji from downtown San Mateo results, supplied two guests and September 28 at 6:00 PM, then asked to use browser inspection. The agent linked OpenTable but said the area could not resolve and falsely said it had no browser tool. The [Sentry trace](https://concierge-vn.sentry.io/explore/traces/trace/d71a4272f4644a08979b98ac14237f97) shows `reservations.find`, Geoapify geocoding, and Browserbase page searches, but no `sevenrooms.inspect` span.
+- Cause or hypothesis: Geoapify returned other California downtowns for the plausible area input “downtown San Mateo, California”; adding San Mateo as the city returned the intended neighborhood. Sentry did not capture the model's exact area argument, so that part remains a hypothesis. The reservation adapter only opens an inspection browser for an exact SevenRooms page, so the OpenTable link was a lead rather than inspected inventory. The answer misstated this coverage limit as absence of a browser tool.
+- Change: Normalize that observed downtown wording for geocoding and state the browser coverage limit in the intake prompt. Added the observed turn to the frozen Sentry snapshot eval with a tool-access truthfulness score.
+- Verification: Live Geoapify queries showed the distinct geocoding results; `bun run check` passed. Braintrust scored the frozen turn at 0% for tool-access truthfulness with zero model or provider calls. A new live chat has not yet verified the revised response.
+- Remaining limit: OpenTable availability is still not inspectable by the current adapter, and Sentry does not retain the exact tool arguments or outputs for this turn.
+
+### 2026-09-27 — Old follow-up controls and unverified reservation calendars stayed in chat
+
+- Evidence: The local transcript screenshot showed an answered date question with its reply form still visible, plus a new reservation calendar saying both “No verified times” and “Not checked for the requested date and party size.”
+- Cause: The page rendered follow-up controls for every past tool result and built a reservation calendar from request parameters even when the provider returned no inspection.
+- Change: Keep the old question in the transcript but render reply controls only for the current follow-up. Render a reservation calendar only when an inspection includes a check time and a times array, including verified empty results.
+- Verification: `bun run check` and the existing calendar/text chat browser test passed. The specific live model conversation was not replayed.
+- Remaining limit: A verified historical calendar remains visible but is disabled after a later turn; the agent's prose may still describe unsupported venues inaccurately.
+
+### 2026-09-27 — Home page spent 270 ms loading the session
+
+- Evidence: Sentry trace `3c67dfdeaff444afa2ec6d598e111ae5` showed a 428 ms local `GET /`; Better Auth's `get-session` took 270 ms, including separate Neon reads for session and user.
+- Cause: The auth hook reads the database on every request because session cookie caching was disabled.
+- Change: Enable Better Auth's signed session cookie cache for 60 seconds.
+- Verification: `bun run check` passed. Two authenticated local `GET /` requests returned 200; the first set `better-auth.session_data` and took 468 ms to response headers, while the next used that cookie and took 162 ms. This is a local single-run comparison, not a production latency claim.
+- Regression guard: Compare repeated authenticated `GET /` traces for `get-session` database spans and browser TTFB.
+- Remaining limit: Session revocation on another device may take up to 60 seconds to take effect; this change does not remove the profile and page-load database reads.
+
+### 2026-09-27 — Ai Fiori inspection intermittently returned candidate links
+
+- Evidence: The same dated, two-person Ai Fiori live browser test reached verified times and checkout on one run, then returned a reservation link with “page inspection was unavailable” on the next. The failing run exposed no verified time buttons.
+- Evidence from Sentry: The failed local `/api/chat` run reached `reservation.inspection_stage=verify_filters` and recorded a generic `Error`. The specific failing call or provider cause was not captured.
+- Hypothesis: A call during date/guest filter verification failed. The trace does not establish whether snapshot access, page state, or another operation caused it.
+- Change: Mark thrown inspection errors retryable for one agent retry, and record the failing operation and a bounded error code. The opt-in live test retains the failed transcript and Playwright page snapshot.
+- Verification: The failing agent answer correctly said no times were confirmed. `bun run check` passes after the change; the next live inspection has not yet exercised the new diagnostic or retry.
+- Regression guard: Run the live reservation test against a dated venue and inspect the `sevenrooms.inspect` stage when it fails.
+- Remaining limit: One success and one failure do not establish a failure rate. Do not present this path as reliably available until repeated runs and stage-level traces agree.
+
+### 2026-09-27 — Dinner search calendar offered breakfast
+
+- Evidence: A live Ai Fiori search for two on September 28 described dinner times, while its calendar offered 7:00 am BREAKFAST. Selecting that option and continuing did not reach checkout.
+- Cause: The browser inspection returns all visible times for the date and party. The calendar renders that set without the user's requested meal or time window.
+- Change: Added an opt-in live browser test for search, selection, checkout handoff, and authenticated live-view redirect. A requested local time window now filters selectable provider times to that window plus 30 minutes on each side; nearby choices are labeled.
+- Verification: The local live Ai Fiori test for September 28, 7–9 pm found a verified dinner time and reached the authenticated Browserbase live-view redirect after selection. No guest details or payment were submitted. The test does not assert that every out-of-window button is absent.
+- Regression guard: [Ai Fiori snapshot](app/tests/snapshots.md) records the requested-window check. The live test currently verifies the dinner handoff, not exclusion of breakfast choices.
+- Remaining limit: A Browserbase redirect establishes the live handoff, but the test does not independently compare every displayed time with the provider page or prove a completed booking.
+
+### 2026-09-27 — Replayed place results blocked checkout follow-up
+
+- Evidence: A live Ai Fiori search found verified dinner times, but clicking Continue to checkout returned HTTP 413 and “This chat is too long.” The checkout tool was never called.
+- Cause: The client resent full tool results, including repeated place lists, and the chat route rejected the body above 32 KB.
+- Change: Keep the visible transcript intact while sending at most 19 recent messages and up to 25 places in recent tool outputs; older tool outputs are omitted and follow-up questions remain. Raise the request guard from 32,000 to 128,000 characters so normal tool results can pass through to the server's bounded model-context projection. On HTTP 413, retry once with the last five messages' text and current selections while leaving the visible transcript intact.
+- Verification: The three mocked chat UI tests passed; the same opt-in live search then reached the Browserbase checkout view without submitting a booking. After raising the guard, `bun run check` passed. A mocked browser run confirmed one smaller retry delivered the assistant response without removing earlier visible turns. A live request near the new limit has not been run.
+- Remaining limit: A genuinely long text conversation can still hit the request-size limit; the model still receives a bounded projection of tool results, not the full request body. The compact retry may lose unselected older references, so the agent must ask or search again if needed.
+
+### 2026-09-27 — Prior search results vanished on the next chat turn
+
+- Evidence: After finding Amoura in South San Francisco, later questions lost the restaurant's listing context; the chat route replayed assistant prose but discarded place and reservation search outputs.
+- Cause: The next model request rebuilt history from text and follow-up questions only. A place selection existed only when the user clicked a map pin.
+- Change: Replay a bounded summary of recent place or reservation-page results as reference context. Carry weather and inspected times only while their check times are fresh; retain location or venue identity when they expire. Remove expired reservation choices from the calendar and offer a new check.
+- Verification: Local two-turn chat listed Amoura, then identified the same South San Francisco listing and Mediterranean category on the follow-up. Freshness boundary checks, the existing reservation browser test, and a browser check that hides an expired time and shows “Check again” passed; `bun run check` passed.
+- Remaining limit: This context lasts only within the open chat and is not server-authenticated evidence. It does not preserve a thread across reloads or prove live availability; checkout rechecks the provider.
+
+### 2026-09-27 — South San Francisco rejected despite a valid Geoapify result
+
+- Evidence: Local chat said it could not resolve South San Francisco, California. Geoapify returned that city and listed Amoura among its restaurants.
+- Cause: The area matcher checked the full state name against a formatted address containing only `CA`.
+- Change: Match a requested context against Geoapify's structured state, state code, or country as well as its formatted address.
+- Verification: Local chat resolved South San Francisco, showed Amoura, identified its Mediterranean category, and answered a follow-up current-weather request. `bun run check` passed.
+- Remaining limit: Place categories do not verify a restaurant menu or reservation availability.
+
+### 2026-09-27 — Calendar selection snapped back
+
+- Evidence: In local chat, choosing September 29 briefly opened its day view, then returned to the initial date/view.
+- Cause: The shared calendar's prop-sync effect overwrote its own interactive date and view state.
+- Change: Initialize local state from props once; remove the reset effect.
+- Verification: Local follow-up kept September 29 selected and “Use date” sent `2026-09-29`; the time view accepted 11:30 and sent `11:30 AM on 2026-09-27`. `bun run check` and the existing reservation E2E passed.
+
+### 2026-09-27 — Downtown Pittsburgh failed area resolution
+
+- Evidence: A local reservation chat could not resolve `Downtown Pittsburgh, Pittsburgh`. Geoapify returned amenities for that wording but returned a Downtown suburb boundary for `Downtown, Pittsburgh`.
+- Cause: The resolver required an exact neighborhood name and repeated the city in the provider query.
+- Change: Collapse a repeated city suffix and accept a neighborhood plus city match.
+- Verification: A local `places.search` chat resolved Downtown, Pittsburgh and displayed its mapped restaurant listings; this does not verify reservation times.
+
 ### 2026-09-27 — Bigham Tavern search stopped before availability inspection
 
 - Evidence: In the local three-turn chat, the agent listed Mount Washington restaurants, found a Bigham Tavern reservation page, then could not verify a table for two right now. The matching Sentry trace shows two `reservations.find` calls and Browserbase search requests, but no `sevenrooms.inspect` span or error. A fresh SevenRooms search returned no exact Bigham Tavern match.
@@ -177,3 +267,61 @@ Record a new entry only when a failure or limitation is observed and useful to r
 - Verification: A local Ai Fiori probe reached the selected date and party and extracted times, but the page also showed "Next available date" times; those extracted times are not verified for the requested date. Both production probes failed to inspect.
 - Regression guard: Repeat a dated venue query and check that the response either contains times verified against page buttons or labels the links as uninspected.
 - Remaining limit: Time extraction must distinguish selected-date buttons from "Next available date" buttons before any extracted time can be treated as availability; no booking flow has been proven.
+### 2026-09-27 — Reservation eval missed agent decisions
+
+- Evidence: The previous Braintrust eval supplied provider facts inside a single prompt, so it could not score `search`, `execute`, per-stop arguments, or a selected-time checkout. The first tool-use run scored 60% on grounded times and 80% on response state.
+- Cause: Single-response cases bypassed the agent loop. Two new scorer failures were measurement errors: curly apostrophes in “can’t verify” and a checkout time selected by the user were marked wrong.
+- Change: Replayed seven synthetic cases through the current intake prompt and two public tool schemas in `app/tests/reservation.eval.ts`; corrected those scorer checks. Kept Braintrust out of `app/src`.
+- Verification: `bun run check` passed; the local eval and final Concierge Braintrust experiment scored 100% on six deterministic checks across seven synthetic cases.
+- Remaining limit: The score change came from scorer corrections, not an app behavior fix. This eval does not cover real provider pages, chat transport, or production traces.
+
+### 2026-09-27 — Browser inspection was restricted to SevenRooms
+
+- Evidence: Sentry trace `103b1071632c4f4a8099c45ba48913aa` found Izakaya Ginji's OpenTable page but never inspected it. Search preferred SevenRooms, inspection and checkout required a SevenRooms URL, and the prompt described other providers as unsupported. Combined place/page outputs also returned early during context extraction, losing the booking link on later turns.
+- Cause: Provider-specific navigation was embedded in the shared reservation capability, while conversation references and live inventory were handled as one output branch. Browserbase credentials were present; the destination never reached the browser.
+- Change: General discovery plus an optional user-requested provider; prefer the conversation's prior public booking URL. Reuse Stagehand act/extract for bounded controls, redirects, filter verification, expanded times, and checkout across providers. Keep both mapped places and booking references. Loading shells receive a short reread; failed filters expose selected-date/guest diagnostics. Checkout rechecks the chosen time as well as date/party, and unnamed seating remains unnamed. No new browser framework or collector.
+- Verification: The authenticated local chat trace `1d49c41541e74f41aa9abe583fc0638d` attempted OpenTable inspection, retried once after a date-control error, and rendered 6:30/6:45/7:00 PM for four on September 28, plus separately labeled nearby times. A direct OpenTable inspection took 39.6 seconds; shared SevenRooms inspection verified Ai Fiori dinner times in 35.1 seconds. Shared OpenTable checkout took 63.1 seconds and reached the matching guest-details/review screen, then the verification script released the session without entering details or submitting. Svelte check and four existing chat/calendar/expiry checks passed.
+- Evaluation: Added the real development-verification Sentry capture to `app/tests/sentry-snapshots.json`. [Braintrust judged the frozen observations](https://www.braintrust.dev/app/whentor/p/Concierge/experiments/observed-reservation-snapshots-2e220285) with zero LLM/provider calls. The new named-venue check passes; the earlier failing capture remains, so their applicable aggregate is 50%. Different captures are not evidence of a controlled improvement rate.
+- Remaining limit: One OpenTable date-control exception and an earlier SevenRooms filter mismatch occurred; the precise SDK exception cause was not retained. Dynamic page changes, blocks, incomplete inventory, and model control selection remain fallible. The complete prior-reference multi-turn journey and other providers are not demonstrated by these directed checks. The shared checkout stops before final submission; no reservation was made. No deployment.
+
+### 2026-09-27 — Follow-up controls had competing owners
+
+- Symptom: The Turkish restaurant conversation asked for guest count after receiving September 28 at 4 pm, but showed a September 27 date/time picker, an inline reply form, and the footer composer.
+- Evidence: User screenshot; `followup` accepted `calendarView` without an answer type, `FollowupWidget` always mounted a second text form, and the page could render a follow-up calendar alongside verified reservation times.
+- Cause: Presentation was chosen independently of the missing detail. The tool contract did not constrain calendar ownership; two forms owned free-text replies. The exact model call behind the screenshot was not retrieved.
+- Change: Add a bounded responseType to the existing follow-up contract; reject calendars for text/partySize questions. Ignore incompatible or legacy calendar settings in the client. The footer owns free text through the existing reply guard; inline controls retain choices/date/time only. Verified reservation times own the calendar when present. Prompt asks for one missing detail and passes the known date into time questions.
+- Verification: Actual capability loaded through Vite rejected a partySize calendar, accepted a partySize reply without a calendar, and preserved September 28 on a time question. Existing browser calendar/text test passed with one calendar, no extra textbox, and no duplicate sends. Svelte check passed with zero errors/warnings. ESLint reports seven existing errors; identical rules fail on the unchanged HEAD versions of both Svelte files.
+- Remaining limit: Prompt adherence for the original live conversation was not replayed. A model can still mislabel a question's answer type; the runtime validates the declared contract, not natural-language meaning. No provider search, booking, deployment, or additional service was added.
+
+### 2026-09-27 — Follow-up choices and calendar presets were underspecified
+
+- Symptom: User clarified that guest counts and other categorical questions must retain their own option UI, and calendars must start from the conversation's date and time.
+- Evidence: Option buttons still existed but choices were optional; partySize had no fallback. The follow-up contract had a date field but no time preset, and CalendarView always initialized time to an empty string.
+- Change: Keep separate choice buttons with A/B/C/D labels; provide guest-count defaults when choices are omitted, and instruct the agent to supply relevant categorical choices. Add validated HH:mm presets alongside the existing date, pass them through to the calendar, and update the local inputs when preset props change. A selected date provides a client fallback. Free text remains available in the footer.
+- Verification: Svelte check passed with zero errors/warnings. The existing browser test passed for option clicks, guest counts without a calendar, one verified-times calendar, and a September 28/16:00 preset. The actual capability runtime preserved presets, supplied guest options, and rejected 25:00.
+- Remaining limit: Browser checks used streamed tool fixtures, not a replay of the original conversation. A date/time typed only in chat still requires the model to pass the known values in the follow-up tool call. No booking or deployment.
+
+### 2026-09-27 — Browser preview attached to a blank tab
+
+- Symptom: The live preview tile and expanded view could remain blank while reservation inspection ran.
+- Evidence: A live local OpenTable check rendered, establishing that the failure is intermittent. In a controlled Browserbase session with `about:blank` plus an active Example Domain page, the existing view route selected the blank page; the local iframe screenshot was empty. The provider's live-view documentation confirms separate URLs per page.
+- Cause: Preview publication preceded Stagehand attachment/navigation, and the route used the session's default debugger URL rather than the inspected page's URL. CSS cropped and scaled the debugger instead of using its supported navbar setting.
+- Change: Publish after navigation, sign the inspected page ID into the existing account-bound ticket, and resolve that exact page for inspection and checkout views. Use `navbar=false` for previews and remove CSS cropping. Expiry, authentication, read-only preview behavior, and session release remain intact.
+- Verification: The same two-tab runtime probe now redirects to the inspected page's socket and visibly renders Example Domain in the local preview. All probe sessions were closed. `bun run check` passed with no errors/warnings; the existing follow-up browser regression passed. The existing opt-in live checkout check now asserts its exact page binding.
+- Limit: The original screenshot's trace was not identified, so another provider or viewer failure could also have contributed there. The modified checkout assertion was not run against live booking inventory this turn. No booking or deployment was performed.
+
+### 2026-09-27 — Concierge sounded like a cautious intake form
+
+- Symptom: User reported repeated criteria questions, blaming a party of four for an unsuccessful check, conflicting venue explanations, and availability replies padded with hold/freshness disclaimers. They clarified that warmth and initiative across the conversation matter more than swapping “visible” for “available.”
+- Cause: The prompt emphasized technical blocks and collecting date/party details without explicitly requiring discovery progress first. Its brief voice instruction competed with repeated evidence/hold language.
+- Change: Update the existing intake prompt to acknowledge preferences naturally, discover before collecting every detail, avoid reconfirming clear guest-count answers, keep checked venues distinct, and offer a grounded next step. Keep inspection failures distinct from no availability and move routine caveats out of the conversational voice. Document this intent in the existing reservation spec.
+- Verification: Svelte check passed with zero errors/warnings. One actual authenticated local chat requested Italian in downtown San Mateo without date/party details; the model called places.search with the Italian constraint before responding “Tomatina is an Italian option downtown at 401 South B Street. What day are you thinking?” No booking or browser inspection was requested in this check.
+- Limit: One live discovery turn is not proof of consistent tone or the full booking conversation. That response asked its date question in text rather than using the existing followup capability. Provider failures and the intermittent blank browser preview remain separate unresolved issues. Model, tool contracts, freshness validation, and checkout authority were unchanged; no synthetic scoring or deployment.
+
+### 2026-09-27 — Calendar follow-ups exposed every depth
+
+- Symptom: User clarified that month/day/time is an agent-selected enum for the unresolved detail, rather than three tabs presented on every clarification. A known date should lead directly to a time picker.
+- Cause: The tool already accepted calendarView, but CalendarView used it only as an initial tab. Follow-ups retained all view tabs and the redundant date input; its day view showed a personal-calendar timeline rather than day selection.
+- Change: Reuse CalendarView with a progressive follow-up mode: month-only native input submits YYYY-MM without inventing a day, day selection submits one full date, and time selection keeps the known date fixed. Retain separate categorical choices. Validate date/time view compatibility and require a date for a time picker; update the existing prompt and spec to select depth from unknowns. Reservation-result browsing retains its existing controls.
+- Verification: Svelte check passed with zero errors/warnings. Extended the existing browser regression with streamed tool observations: month-only and day-only replies each submit once, time retains September 28/16:00 without tabs or a date input, and categorical choices and verified-time selection still pass. git diff --check passed.
+- Limit: Browser verification uses controlled streamed tool outputs, not a live-model conversation. The agent must still resolve ambiguous language and supply the correct enum and presets. No provider inspection, booking, or deployment.

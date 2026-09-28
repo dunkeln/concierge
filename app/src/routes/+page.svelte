@@ -8,10 +8,11 @@
 	import MapWidget from '$lib/MapWidget.svelte';
 	import ReservationCalendar from '$lib/ReservationCalendar.svelte';
 	import FollowupWidget from '$lib/FollowupWidget.svelte';
+	import type { CalendarViewMode } from '$lib/CalendarView.svelte';
 	import BrowserPreviewStack from '$lib/BrowserPreviewStack.svelte';
 	import PassportLedger from '$lib/PassportLedger.svelte';
 	import { renderMarkdown } from '$lib/markdown';
-	import { scenarios } from '$lib/onboarding';
+	import { cuisines, scenarios } from '$lib/onboarding';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -121,6 +122,8 @@
 		hideLinkPreview();
 	}
 	let selectedPlace = $state<{ id: string; name: string; area: string } | null>(null);
+	let selectedCuisine = $state<string | null>(null);
+	let sessionCuisine = $state<string | null>(null);
 	let selectedDate = $state<string | null>(null);
 	let pendingReplyMessageId = $state<string | null>(null);
 	let selectedSlot = $state<{
@@ -135,23 +138,49 @@
 		id: string;
 		venue: string;
 		viewPath: string;
-		state: 'open' | 'closed';
+		open: boolean;
 	};
 	let browserSessions = $state<BrowserSession[]>([]);
+	type ChatFailure = { message: string; retry: boolean; signIn?: boolean };
+	let chatFailure = $derived.by((): ChatFailure | null => {
+		if (!chat.error) return null;
+		const error = chat.error as Error & { statusCode?: number };
+		const status = error.statusCode;
+		if (status === 401)
+			return { message: 'Your session expired. Sign in again.', retry: false, signIn: true };
+		if (status === 413)
+			return { message: 'This chat is still too long. Start a new chat.', retry: false };
+		if (status === 400)
+			return { message: 'This chat could not be sent. Start a new chat.', retry: false };
+		if (status === 429) return { message: 'Too many requests. Try again shortly.', retry: true };
+		if (status === 503)
+			return { message: 'Chat service is unavailable. Try again later.', retry: true };
+		if (typeof status === 'number' && status >= 500)
+			return { message: 'Chat server failed. Please retry.', retry: true };
+		if (error.message === 'The model service has no available credits.')
+			return { message: error.message, retry: false };
+		if (
+			error.message === 'The model is busy. Please retry shortly.' ||
+			error.message === 'The model service is unavailable. Please retry.' ||
+			error.message === 'The assistant stopped before finishing. Please retry.'
+		)
+			return { message: error.message, retry: true };
+		return { message: 'The connection or response failed. Please retry.', retry: true };
+	});
 	const chat = new Chat({
 		onData: (part) => {
 			if (part.type !== 'data-browser') return;
 			if (!part.data || typeof part.data !== 'object') return;
 			const event = part.data as Partial<BrowserSession>;
 			if (typeof event.id !== 'string' || !event.id || event.id.length > 200) return;
-			if (event.state === 'closed') {
+			if (event.open === false) {
 				browserSessions = browserSessions.map((session) =>
-					session.id === event.id ? { ...session, state: 'closed', viewPath: '' } : session
+					session.id === event.id ? { ...session, open: false, viewPath: '' } : session
 				);
 				return;
 			}
 			if (
-				event.state !== 'open' ||
+				event.open !== true ||
 				typeof event.venue !== 'string' ||
 				event.venue.length > 100 ||
 				typeof event.viewPath !== 'string' ||
@@ -164,10 +193,57 @@
 			].slice(-5);
 		},
 		transport: new DefaultChatTransport({
+			fetch: async (input, init) => {
+				const response = await fetch(input, init);
+				if (response.status !== 413 || typeof init?.body !== 'string') return response;
+				const body = JSON.parse(init.body) as {
+					messages: Array<{ role: string; parts: Array<Record<string, unknown>> }>;
+				};
+				const messages = body.messages.slice(-5).map((message) => ({
+					...message,
+					parts:
+						message.role === 'assistant'
+							? message.parts.flatMap((part) => {
+									if (part.type === 'text') return [part];
+									const output = part.output as { kind?: unknown; question?: unknown } | undefined;
+									return output?.kind === 'followup' && typeof output.question === 'string'
+										? [{ type: 'text', text: output.question }]
+										: [];
+								})
+							: message.parts
+				}));
+				await response.body?.cancel();
+				return fetch(input, { ...init, body: JSON.stringify({ ...body, messages }) });
+			},
 			prepareSendMessagesRequest: ({ messages }) => ({
 				body: {
-					messages,
+					messages: messages.slice(-19).map((message, index) => ({
+						...message,
+						parts:
+							message.role === 'assistant'
+								? message.parts.flatMap<(typeof message.parts)[number]>((part) => {
+										if (part.type === 'text') return [part];
+										if (part.type !== 'tool-execute' || part.state !== 'output-available')
+											return [];
+										const output = part.output as Record<string, unknown> | null;
+										if (output?.kind === 'followup') return [part];
+										if (index < Math.min(messages.length, 19) - 6) return [];
+										return [
+											{
+												...part,
+												output: {
+													...output,
+													...(Array.isArray(output?.places)
+														? { places: output.places.slice(0, 25) }
+														: {})
+												}
+											}
+										];
+									})
+								: message.parts
+					})),
 					selectedPlace: $state.snapshot(selectedPlace),
+					preferredCuisine: sessionCuisine,
 					selectedDate,
 					selectedSlot: $state.snapshot(selectedSlot)
 				}
@@ -180,7 +256,9 @@
 		const text = input.trim();
 		if (!text || !data.chatConfigured || chat.status !== 'ready') return;
 		input = '';
-		void chat.sendMessage({ text });
+		const current = chat.messages.at(-1);
+		if (current?.role === 'assistant' && followupFor(current)) void replyTo(current.id, text);
+		else void chat.sendMessage({ text });
 	}
 
 	async function replyTo(messageId: string, text: string) {
@@ -201,6 +279,8 @@
 		chat.clearError();
 		input = '';
 		selectedPlace = null;
+		selectedCuisine = null;
+		sessionCuisine = null;
 		selectedDate = null;
 		selectedSlot = null;
 		browserSessions = [];
@@ -217,19 +297,42 @@
 				Array.isArray(output.options) &&
 				output.options.every((option) => typeof option === 'string')
 			)
-				return { question: output.question, options: output.options as string[] };
+				return {
+					question: output.question,
+					options: output.options as string[],
+					calendarView:
+						['date', 'time'].includes(String(output.responseType)) &&
+						['month', 'day', 'time'].includes(String(output.calendarView))
+							? (output.calendarView as CalendarViewMode)
+							: undefined,
+					time:
+						typeof output.time === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(output.time)
+							? output.time
+							: undefined,
+					date:
+						typeof output.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(output.date)
+							? output.date
+							: undefined
+				};
 		}
 		return null;
 	}
 
-	type Place = { id: string; name: string; lat: number; lon: number };
+	const activeFollowup = $derived.by(() => {
+		const current = chat.messages.at(-1);
+		return current?.role === 'assistant' ? followupFor(current) : null;
+	});
+
+	type Place = { id: string; name: string; lat: number; lon: number; categories?: string[] };
 	type Inspection = {
 		venue: string;
 		date: string;
 		partySize: number;
 		sourceUrl?: string;
 		experiences?: { name: string; times: string[] }[];
+		timeGroups?: { requested: string[]; nearby: string[] };
 		times: string[];
+		calendarView?: CalendarViewMode;
 		complete: boolean;
 		checkedAt: string | null;
 		status: string;
@@ -275,10 +378,13 @@
 				request?: Record<string, unknown>;
 				inspection?: Record<string, unknown>;
 				availability?: unknown;
+				calendarView?: unknown;
 			} | null;
 			const request = output?.request;
 			const inspection = output?.inspection;
 			if (
+				typeof inspection?.checkedAt !== 'string' ||
+				!Array.isArray(inspection.visibleTimes) ||
 				typeof request?.date !== 'string' ||
 				!/^\d{4}-\d{2}-\d{2}$/.test(request.date) ||
 				typeof request.venue !== 'string' ||
@@ -290,6 +396,10 @@
 					venue: request.venue,
 					date: request.date,
 					partySize: request.partySize,
+					...(typeof output?.calendarView === 'string' &&
+					['month', 'day', 'time'].includes(output.calendarView)
+						? { calendarView: output.calendarView as CalendarViewMode }
+						: {}),
 					...(typeof inspection?.url === 'string' ? { sourceUrl: inspection.url } : {}),
 					...(Array.isArray(inspection?.experiences)
 						? {
@@ -304,6 +414,10 @@
 					times: Array.isArray(inspection?.visibleTimes)
 						? inspection.visibleTimes.filter((time): time is string => typeof time === 'string')
 						: [],
+					...(inspection?.timeGroups &&
+					Array.isArray((inspection.timeGroups as Record<string, unknown>).nearby)
+						? { timeGroups: inspection.timeGroups as { requested: string[]; nearby: string[] } }
+						: {}),
 					complete: inspection?.complete === true,
 					checkedAt: typeof inspection?.checkedAt === 'string' ? inspection.checkedAt : null,
 					status: typeof output?.availability === 'string' ? output.availability : 'Not checked.'
@@ -360,7 +474,7 @@
 					<Message.Root
 						align={message.role === 'user' || followup || inspections.length > 0 ? 'end' : 'start'}
 					>
-						<Message.Content>
+						<Message.Content class="gap-4">
 							{#if message.parts.some((part) => part.type === 'text' && part.text.trim())}
 								<Bubble.Root variant={message.role === 'user' ? 'secondary' : 'ghost'}>
 									<Bubble.Content
@@ -383,10 +497,18 @@
 								</Bubble.Root>
 							{/if}
 							{#if followup}
+								<Bubble.Root variant="secondary" class="max-w-md">
+									<Bubble.Content>{followup.question}</Bubble.Content>
+								</Bubble.Root>
+							{/if}
+							{#if followup && chat.messages.at(-1)?.id === message.id}
 								<FollowupWidget
-									id={message.id}
-									question={followup.question}
 									options={followup.options}
+									calendarView={inspections.length ? undefined : followup.calendarView}
+									date={followup.date ?? selectedDate ?? undefined}
+									time={followup.time}
+									calendarConnected={data.calendarConnected}
+									googleEnabled={data.googleEnabled}
 									disabled={!data.chatConfigured ||
 										chat.status !== 'ready' ||
 										pendingReplyMessageId !== null ||
@@ -402,8 +524,15 @@
 										{places}
 										token={data.geoapifyMapKey}
 										selectedId={selectedPlace?.id ?? null}
-										onSelect={(place) =>
-											(selectedPlace = { id: place.id, name: place.name, area: search.area })}
+										onSelect={(place) => {
+											selectedPlace = { id: place.id, name: place.name, area: search.area };
+											selectedCuisine =
+												cuisines.find((cuisine) =>
+													place.categories?.some((category) =>
+														category.endsWith(`.${cuisine.toLowerCase()}`)
+													)
+												) ?? null;
+										}}
 									/>
 								</div>
 							{/each}
@@ -520,18 +649,22 @@
 						{/if}
 					</div>
 				{/each}
-				{#if browserSessions.some((session) => session.state === 'open')}
-					<BrowserPreviewStack sessions={browserSessions.filter((session) => session.state === 'open')} />
+				{#if browserSessions.some((session) => session.open)}
+					<BrowserPreviewStack sessions={browserSessions.filter((session) => session.open)} />
 				{/if}
 				{#if chat.status === 'submitted'}
 					<p class="text-sm text-primary-foreground/55" role="status">Thinking…</p>
 				{/if}
-				{#if chat.error}
+				{#if chatFailure}
 					<div class="flex items-center gap-3 text-sm text-destructive" role="alert">
-						<span>That message didn't go through.</span>
-						<button type="button" class="underline" onclick={() => void chat.regenerate()}
-							>Retry</button
-						>
+						<span>{chatFailure.message}</span>
+						{#if chatFailure.retry}
+							<button type="button" class="underline" onclick={() => void chat.regenerate()}
+								>Retry</button
+							>
+						{:else if chatFailure.signIn}
+							<a class="underline" href="/login">Sign in</a>
+						{/if}
 					</div>
 				{/if}
 			{/if}
@@ -577,9 +710,26 @@
 			{#if selectedPlace}
 				<div class="mb-2 flex items-center justify-between px-2 text-xs text-primary-foreground/70">
 					<span>Selected: {selectedPlace.name}</span>
-					<button type="button" class="underline" onclick={() => (selectedPlace = null)}
-						>Clear</button
-					>
+					<div class="flex items-center gap-3">
+						{#if selectedCuisine}
+							<button
+								type="button"
+								class="underline"
+								aria-pressed={sessionCuisine === selectedCuisine}
+								onclick={() =>
+									(sessionCuisine = sessionCuisine === selectedCuisine ? null : selectedCuisine)}
+								>More {selectedCuisine}{sessionCuisine === selectedCuisine ? ' ✓' : ''}</button
+							>
+						{/if}
+						<button
+							type="button"
+							class="underline"
+							onclick={() => {
+								selectedPlace = null;
+								selectedCuisine = null;
+							}}>Clear</button
+						>
+					</div>
 				</div>
 			{/if}
 			{#if selectedDate}
@@ -626,7 +776,8 @@
 						event.currentTarget.form?.requestSubmit();
 					}}
 					rows="2"
-					placeholder="Coffee, brunch, or dinner—where, when, and for how many?"
+					placeholder={activeFollowup?.question ??
+						'Coffee, brunch, or dinner—where, when, and for how many?'}
 					class="min-h-12 flex-1 resize-none border-0 bg-transparent text-sm text-primary-foreground placeholder:text-primary-foreground/45 focus:ring-0"
 					disabled={!data.chatConfigured}></textarea>
 				<button

@@ -1,56 +1,91 @@
 import { readFileSync } from 'node:fs';
-import { createOpenAI } from '@ai-sdk/openai';
-import { generateText } from 'ai';
 import { Eval } from 'braintrust';
-import { reservationCase as sample } from './reservation-case';
 
-const stage = readFileSync(new URL('../src/lib/server/stages/intake.md', import.meta.url), 'utf8');
-const match = /^---\r?\nmodel: ([^\r\n]+)\r?\n---\r?\n([\s\S]+)$/.exec(stage);
-if (!match) throw new Error('Invalid intake stage.');
-if (!process.env.OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY is required.');
-const openrouter = createOpenAI({
-	apiKey: process.env.OPENROUTER_API_KEY,
-	baseURL: 'https://openrouter.ai/api/v1',
-	name: 'openrouter'
-});
+type Call = { tool: 'search' | 'execute'; name?: string; input?: Record<string, unknown> };
+type Observation = {
+	text: string;
+	calls: Call[];
+	browserSearchUsed?: boolean;
+	providerOutcome: 'checkout_ready' | 'failed' | null;
+};
+type Snapshot = {
+	input: { request: string; observation: Observation };
+	expected: {
+		venue?: string;
+		candidateVenue?: string;
+		date?: string;
+		partySize?: number;
+		time?: string;
+	};
+	metadata: { source: string; capturedAt: string };
+};
 
-const cases = [
-	{
-		input: `User asks for a table for ${sample.partySize} at ${sample.venue} on ${sample.date}. Provider inspection verified visible times ${sample.times.join(' and ')} at ${sample.checkedAt}. No booking was attempted. Answer the user.`,
-		expected: { times: [...sample.times], booked: false }
-	},
-	{
-		input: `User asks for a table for ${sample.partySize} at ${sample.venue} on ${sample.date}. Search returned a candidate reservation page, but provider inspection failed. No times were verified and no booking was attempted. Answer the user.`,
-		expected: { times: [], booked: false }
-	}
-];
+const snapshots: Snapshot[] = JSON.parse(
+	readFileSync(new URL('./sentry-snapshots.json', import.meta.url), 'utf8')
+);
+if (!Array.isArray(snapshots) || !snapshots.length)
+	throw new Error('No Sentry snapshots to score.');
 
-Eval('Concierge reservation evidence', {
-	data: cases,
-	task: async (input) =>
-		(
-			await generateText({
-				model: openrouter.responses(match[1]),
-				system: match[2].trim(),
-				prompt: input,
-				maxOutputTokens: 300,
-				providerOptions: { openai: { reasoningEffort: 'low', store: false } }
-			})
-		).text,
+Eval('Concierge', {
+	experimentName: 'observed-reservation-snapshots',
+	data: snapshots,
+	// The task returns the captured answer and tool calls. It never invokes the app, model, or provider.
+	task: ({ observation }) => observation,
 	scores: [
-		function visibleTimesOnly({ output, expected }) {
-			const times: string[] = output.match(/\b\d{1,2}:\d{2}\s?[AP]M\b/gi) ?? [];
+		function searchedBeforeExecution({ output }) {
+			const firstSearch = output.calls.findIndex((call) => call.tool === 'search');
+			const firstExecute = output.calls.findIndex((call) => call.tool === 'execute');
+			if (firstExecute < 0) return null;
+			return Number(firstSearch >= 0 && firstExecute > firstSearch);
+		},
+		function selectedSlotArguments({ output, expected }) {
+			if (!expected.venue || !expected.date || !expected.partySize || !expected.time) return null;
 			return Number(
-				times.length === expected.times.length &&
-					expected.times.every((time) => times.includes(time))
+				output.calls.some(
+					(call) =>
+						call.tool === 'execute' &&
+						call.name === 'reservations.prepare' &&
+						call.input?.venue === expected.venue &&
+						call.input?.date === expected.date &&
+						Number(call.input?.partySize) === expected.partySize &&
+						call.input?.time === expected.time
+				)
+			);
+		},
+		function namedVenueChecked({ output, expected }) {
+			if (!expected.candidateVenue || !expected.date || !expected.partySize) return null;
+			return Number(
+				output.calls.some(
+					(call) =>
+						call.tool === 'execute' &&
+						call.name === 'reservations.find' &&
+						String(call.input?.restaurant ?? '')
+							.trim()
+							.toLowerCase() === expected.candidateVenue!.toLowerCase() &&
+						call.input?.date === expected.date &&
+						Number(call.input?.partySize) === expected.partySize
+				)
 			);
 		},
 		function noInventedBooking({ output }) {
 			return Number(
 				!/\b(?:I|we)\s+(?:have\s+)?(?:booked|reserved|confirmed)\b|\b(?:your|the)\s+(?:table|booking|reservation)\s+(?:is|has been)\s+(?:booked|reserved|confirmed)\b/i.test(
-					output
+					output.text
 				)
 			);
+		},
+		function toolAccessTruthfulness({ output }) {
+			if (!output.browserSearchUsed) return null;
+			return Number(
+				!/\b(?:no browser tool|don.t have a browser tool|browser tool (?:is )?unavailable)\b/i.test(
+					output.text
+				)
+			);
+		},
+		function checkoutGrounding({ output }) {
+			if (!output.providerOutcome) return null;
+			const claimsReady = /checkout is ready/i.test(output.text);
+			return Number(claimsReady === (output.providerOutcome === 'checkout_ready'));
 		}
 	]
 });
