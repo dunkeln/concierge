@@ -4,6 +4,7 @@
 		options,
 		calendarView,
 		date,
+		time,
 		calendarConnected,
 		googleEnabled,
 		disabled,
@@ -12,6 +13,7 @@
 		options: string[];
 		calendarView?: CalendarViewMode;
 		date?: string;
+		time?: string;
 		calendarConnected: boolean;
 		googleEnabled: boolean;
 		disabled: boolean;
@@ -26,6 +28,7 @@
 		<CalendarView
 			initialView={calendarView}
 			initialDate={date ?? todayString}
+			initialTime={time}
 			{calendarConnected}
 			{googleEnabled}
 			{disabled}
@@ -36,12 +39,15 @@
 	{/if}
 	{#if options.length}
 		<div class="flex flex-wrap gap-2">
-			{#each options as option}
+			{#each options as option, index (index)}
 				<button
 					type="button"
 					{disabled}
 					class="min-h-11 rounded-lg border border-primary-foreground/25 bg-secondary px-3 text-left hover:bg-primary-foreground/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50"
-					onclick={() => onReply(option)}>{option}</button
+					onclick={() => onReply(option)}
+					><span aria-hidden="true" class="mr-2 text-primary-foreground/50"
+						>{String.fromCharCode(65 + index)}</span
+					>{option}</button
 				>
 			{/each}
 		</div>

@@ -192,15 +192,16 @@ async function geoapifySearch(
 export const capabilities: Record<string, Capability> = {
 	followup: {
 		description:
-			'Ask the user for missing information and end this turn. The footer accepts replies; supply optional short choices and an explicit responseType. Do not use for facts you can find with another capability.',
+			'Ask the user for missing information and end this turn. The footer accepts replies; supply short answer choices for non-calendar questions and an explicit responseType. Do not use for facts you can find with another capability.',
 		input: {
 			question: 'One concise question for the user',
 			responseType: 'text, partySize, date, or time: the missing detail this question asks for',
 			options: 'Optional array of up to four short answer choices; free text is always available',
 			calendarView: 'Optional month, day, or time when a calendar helps answer the question',
-			date: 'Optional YYYY-MM-DD date to open the calendar on'
+			date: 'Known YYYY-MM-DD date from the conversation to open the calendar on',
+			time: 'Known local HH:mm time from the conversation to prefill the calendar'
 		},
-		run: ({ question, responseType = 'text', options, calendarView, date }) => {
+		run: ({ question, responseType = 'text', options, calendarView, date, time }) => {
 			if (typeof question !== 'string' || !question.trim() || question.length > 300)
 				return { error: 'Provide one question of at most 300 characters.' };
 			if (
@@ -226,13 +227,23 @@ export const capabilities: Record<string, Capability> = {
 					new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date)
 			)
 				return { error: 'Provide a valid calendar date.' };
+			if (
+				time !== undefined &&
+				(typeof time !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time))
+			)
+				return { error: 'Provide a valid HH:mm calendar time.' };
 			return {
 				kind: 'followup',
 				question: question.trim(),
 				responseType,
-				options: options ?? [],
+				options: options?.length
+					? options
+					: responseType === 'partySize'
+						? ['1 guest', '2 guests', '4 guests', '6 guests']
+						: [],
 				...(calendarView ? { calendarView } : {}),
-				...(date ? { date } : {})
+				...(date ? { date } : {}),
+				...(time ? { time } : {})
 			};
 		}
 	},

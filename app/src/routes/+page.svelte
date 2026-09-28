@@ -305,6 +305,10 @@
 						['month', 'day', 'time'].includes(String(output.calendarView))
 							? (output.calendarView as CalendarViewMode)
 							: undefined,
+					time:
+						typeof output.time === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(output.time)
+							? output.time
+							: undefined,
 					date:
 						typeof output.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(output.date)
 							? output.date
@@ -501,7 +505,8 @@
 								<FollowupWidget
 									options={followup.options}
 									calendarView={inspections.length ? undefined : followup.calendarView}
-									date={followup.date}
+									date={followup.date ?? selectedDate ?? undefined}
+									time={followup.time}
 									calendarConnected={data.calendarConnected}
 									googleEnabled={data.googleEnabled}
 									disabled={!data.chatConfigured ||

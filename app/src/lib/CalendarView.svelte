@@ -6,6 +6,7 @@
 	let {
 		initialView,
 		initialDate,
+		initialTime = '',
 		verifiedDate,
 		choices = [],
 		selectedTime = null,
@@ -18,6 +19,7 @@
 	}: {
 		initialView: CalendarViewMode;
 		initialDate: string;
+		initialTime?: string;
 		verifiedDate?: string;
 		choices?: Choice[];
 		selectedTime?: string | null;
@@ -30,7 +32,13 @@
 	} = $props();
 	let view = $state<CalendarViewMode>(untrack(() => initialView));
 	let date = $state(untrack(() => initialDate));
-	let time = $state('');
+	let time = $state(untrack(() => initialTime));
+	$effect(() => {
+		date = initialDate;
+	});
+	$effect(() => {
+		time = initialTime;
+	});
 	let busy = $state<{ start: string; end: string }[]>([]);
 	let loading = $state(false);
 	let failed = $state(false);

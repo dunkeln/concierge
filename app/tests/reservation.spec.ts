@@ -136,7 +136,7 @@ test('answers calendar and text questions without duplicate sends', async ({ pag
 							}
 						});
 					}
-					if (calls === 1 || calls === 3) {
+					if ([1, 3, 5, 7].includes(calls)) {
 						writer.write({
 							type: 'tool-input-available',
 							toolCallId: `followup-${calls}`,
@@ -148,10 +148,22 @@ test('answers calendar and text questions without duplicate sends', async ({ pag
 							toolCallId: `followup-${calls}`,
 							output: {
 								kind: 'followup',
-								responseType: calls === 1 ? 'time' : 'text',
+								responseType: calls === 7 ? 'partySize' : calls === 3 ? 'text' : 'time',
+								date: '2026-09-28',
+								time: '16:00',
 								calendarView: 'time',
-								question: calls === 1 ? 'Which time works for you?' : 'What neighborhood?',
-								options: calls === 3 ? ['West Village', 'Chelsea'] : []
+								question:
+									calls === 7
+										? 'How many guests?'
+										: calls === 3
+											? 'What neighborhood?'
+											: 'Which time works for you?',
+								options:
+									calls === 7
+										? ['1 guest', '2 guests', '4 guests', '6 guests']
+										: calls === 3
+											? ['West Village', 'Chelsea']
+											: []
 							}
 						});
 					} else {
@@ -204,10 +216,25 @@ test('answers calendar and text questions without duplicate sends', async ({ pag
 	await page.getByLabel('Your reservation request').fill('Find brunch.');
 	await page.getByRole('button', { name: 'Send message' }).click();
 	await expect(page.getByRole('group', { name: 'Calendar view' })).toHaveCount(0);
-	await page.getByLabel('Your reservation request').fill('West Village');
-	await page.getByRole('button', { name: 'Send message' }).click();
+	await page.getByRole('button', { name: 'West Village', exact: true }).click();
 	await expect(page.getByText('Selection received.')).toBeVisible();
 	expect(calls).toBe(4);
+	await page.getByRole('button', { name: 'New chat' }).click();
+	await page.getByLabel('Your reservation request').fill('Adjust September 28 at 4 pm.');
+	await page.getByRole('button', { name: 'Send message' }).click();
+	await expect(page.getByLabel('Date', { exact: true })).toHaveValue('2026-09-28');
+	await expect(page.getByLabel('Time', { exact: true })).toHaveValue('16:00');
+	await page.getByRole('button', { name: 'Use time', exact: true }).click();
+	await expect(page.getByText('Selection received.')).toBeVisible();
+	expect(calls).toBe(6);
+	await page.getByRole('button', { name: 'New chat' }).click();
+	await page.getByLabel('Your reservation request').fill('Find a table.');
+	await page.getByRole('button', { name: 'Send message' }).click();
+	await expect(page.getByRole('group', { name: 'Calendar view' })).toHaveCount(0);
+	await expect(page.getByRole('button', { name: '4 guests', exact: true })).toBeVisible();
+	await page.getByRole('button', { name: '2 guests', exact: true }).click();
+	await expect(page.getByText('Selection received.')).toBeVisible();
+	expect(calls).toBe(8);
 });
 
 test('expired reservation times require a new check', async ({ page }) => {
