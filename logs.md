@@ -579,3 +579,10 @@ Record a new entry only when a failure or limitation is observed and useful to r
 - Hypothesis: the viewer retained the image at its reused path; its Markdown rendering did not handle the details wrapper consistently.
 - Fix: gave the latency chart a distinct filename and updated both documentation links; removed the HTML details wrapper. No application behavior changed.
 - Verification: checked the linked asset exists, parses as SVG, contains the expected latency title and no background rectangles; README contains no details tags. Native preview refresh still needs visual confirmation.
+
+### Vercel reservation browser launch — 2026-09-28
+
+- Observed: production commit ee4f70e built successfully, but the hosted Ai Fiori journey returned no times after two launch failures. Sentry issue JAVASCRIPT-SVELTEKIT-Y, trace af937653f4464e3189f8e625595b2784. Syncing production credentials did not repair launch.
+- Cause: Stagehand dynamically reads dist/assets/stagehand-extension.zip before creating a Browserbase session. Vercel's traced function omitted that archive. Running the packaged SDK independently reproduced “Failed to upload the Stagehand extension to Browserbase”, caused by ENOENT at the missing archive path.
+- Fix: after the existing Vercel adapter finishes, copy the installed dependency's archive into functions containing Stagehand. No dependency, browser policy or reservation contract change.
+- Verification: packaged launch reproducer is retained in ignored app/tests/local/packaged-browser-probe.mjs. After rebuild, the archive is present and the packaged SDK launches and closes a real Browserbase session successfully. Production build and Svelte check pass; hosted checkout verification follows. Final booking remains outside the test.

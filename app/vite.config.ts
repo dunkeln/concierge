@@ -3,6 +3,15 @@ import tailwindcss from '@tailwindcss/vite';
 import adapter from '@sveltejs/adapter-vercel';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
+import { copyFileSync, existsSync, globSync, mkdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+const vercel = adapter({ runtime: 'nodejs24.x' });
+const stagehandArchive = join(
+	dirname(fileURLToPath(import.meta.resolve('@browserbasehq/stagehand'))),
+	'assets/stagehand-extension.zip'
+);
 
 export default defineConfig({
 	plugins: [
@@ -17,7 +26,19 @@ export default defineConfig({
 				runes: ({ filename }) =>
 					filename.split(/[/\\]/).includes('node_modules') ? undefined : true
 			},
-			adapter: adapter({ runtime: 'nodejs24.x' }),
+			adapter: {
+				...vercel,
+				async adapt(builder) {
+					await vercel.adapt(builder);
+					// Stagehand resolves its archive dynamically; Vercel's file tracer misses it.
+					for (const fn of globSync('.vercel/output/functions/**/*.func')) {
+						const dist = join(fn, 'node_modules/@browserbasehq/stagehand/dist');
+						if (!existsSync(join(dist, 'index.mjs'))) continue;
+						mkdirSync(join(dist, 'assets'), { recursive: true });
+						copyFileSync(stagehandArchive, join(dist, 'assets/stagehand-extension.zip'));
+					}
+				}
+			},
 			experimental: {
 				instrumentation: { server: true },
 				tracing: { server: true }
