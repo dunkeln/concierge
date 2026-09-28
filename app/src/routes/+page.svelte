@@ -256,7 +256,9 @@
 		const text = input.trim();
 		if (!text || !data.chatConfigured || chat.status !== 'ready') return;
 		input = '';
-		void chat.sendMessage({ text });
+		const current = chat.messages.at(-1);
+		if (current?.role === 'assistant' && followupFor(current)) void replyTo(current.id, text);
+		else void chat.sendMessage({ text });
 	}
 
 	async function replyTo(messageId: string, text: string) {
@@ -298,9 +300,11 @@
 				return {
 					question: output.question,
 					options: output.options as string[],
-					calendarView: ['month', 'day', 'time'].includes(String(output.calendarView))
-						? (output.calendarView as CalendarViewMode)
-						: undefined,
+					calendarView:
+						['date', 'time'].includes(String(output.responseType)) &&
+						['month', 'day', 'time'].includes(String(output.calendarView))
+							? (output.calendarView as CalendarViewMode)
+							: undefined,
 					date:
 						typeof output.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(output.date)
 							? output.date
@@ -309,6 +313,11 @@
 		}
 		return null;
 	}
+
+	const activeFollowup = $derived.by(() => {
+		const current = chat.messages.at(-1);
+		return current?.role === 'assistant' ? followupFor(current) : null;
+	});
 
 	type Place = { id: string; name: string; lat: number; lon: number; categories?: string[] };
 	type Inspection = {
@@ -490,9 +499,8 @@
 							{/if}
 							{#if followup && chat.messages.at(-1)?.id === message.id}
 								<FollowupWidget
-									id={message.id}
 									options={followup.options}
-									calendarView={followup.calendarView}
+									calendarView={inspections.length ? undefined : followup.calendarView}
 									date={followup.date}
 									calendarConnected={data.calendarConnected}
 									googleEnabled={data.googleEnabled}
@@ -763,7 +771,8 @@
 						event.currentTarget.form?.requestSubmit();
 					}}
 					rows="2"
-					placeholder="Coffee, brunch, or dinner—where, when, and for how many?"
+					placeholder={activeFollowup?.question ??
+						'Coffee, brunch, or dinner—where, when, and for how many?'}
 					class="min-h-12 flex-1 resize-none border-0 bg-transparent text-sm text-primary-foreground placeholder:text-primary-foreground/45 focus:ring-0"
 					disabled={!data.chatConfigured}></textarea>
 				<button

@@ -148,6 +148,8 @@ test('answers calendar and text questions without duplicate sends', async ({ pag
 							toolCallId: `followup-${calls}`,
 							output: {
 								kind: 'followup',
+								responseType: calls === 1 ? 'time' : 'text',
+								calendarView: 'time',
 								question: calls === 1 ? 'Which time works for you?' : 'What neighborhood?',
 								options: calls === 3 ? ['West Village', 'Chelsea'] : []
 							}
@@ -179,7 +181,12 @@ test('answers calendar and text questions without duplicate sends', async ({ pag
 	const calendar = page.getByRole('region', { name: 'Reservation calendar' });
 	await expect(calendar.getByRole('button', { name: sample.times[0] })).toBeVisible();
 	await expect(calendar.getByRole('button', { name: sample.times[1] })).toBeVisible();
-	await expect(page.getByRole('textbox', { name: 'Reply to the agent' })).toBeVisible();
+	await expect(page.getByRole('textbox', { name: 'Reply to the agent' })).toHaveCount(0);
+	await expect(page.getByRole('group', { name: 'Calendar view' })).toHaveCount(1);
+	await expect(page.getByLabel('Your reservation request')).toHaveAttribute(
+		'placeholder',
+		'Which time works for you?'
+	);
 	await expect(
 		page.locator('[data-slot="message"]', { has: page.getByText('Which time works for you?') })
 	).toHaveAttribute('data-align', 'end');
@@ -196,8 +203,9 @@ test('answers calendar and text questions without duplicate sends', async ({ pag
 	await page.getByRole('button', { name: 'New chat' }).click();
 	await page.getByLabel('Your reservation request').fill('Find brunch.');
 	await page.getByRole('button', { name: 'Send message' }).click();
-	await page.getByRole('textbox', { name: 'Reply to the agent' }).fill('West Village');
-	await page.getByRole('button', { name: 'Send', exact: true }).click();
+	await expect(page.getByRole('group', { name: 'Calendar view' })).toHaveCount(0);
+	await page.getByLabel('Your reservation request').fill('West Village');
+	await page.getByRole('button', { name: 'Send message' }).click();
 	await expect(page.getByText('Selection received.')).toBeVisible();
 	expect(calls).toBe(4);
 });

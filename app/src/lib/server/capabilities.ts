@@ -192,14 +192,15 @@ async function geoapifySearch(
 export const capabilities: Record<string, Capability> = {
 	followup: {
 		description:
-			'Ask the user for missing information and end this turn. Render a reply field, with optional short choices. Do not use for facts you can find with another capability.',
+			'Ask the user for missing information and end this turn. The footer accepts replies; supply optional short choices and an explicit responseType. Do not use for facts you can find with another capability.',
 		input: {
 			question: 'One concise question for the user',
+			responseType: 'text, partySize, date, or time: the missing detail this question asks for',
 			options: 'Optional array of up to four short answer choices; free text is always available',
 			calendarView: 'Optional month, day, or time when a calendar helps answer the question',
 			date: 'Optional YYYY-MM-DD date to open the calendar on'
 		},
-		run: ({ question, options, calendarView, date }) => {
+		run: ({ question, responseType = 'text', options, calendarView, date }) => {
 			if (typeof question !== 'string' || !question.trim() || question.length > 300)
 				return { error: 'Provide one question of at most 300 characters.' };
 			if (
@@ -211,6 +212,10 @@ export const capabilities: Record<string, Capability> = {
 					))
 			)
 				return { error: 'Provide up to four short answer choices.' };
+			if (!['text', 'partySize', 'date', 'time'].includes(String(responseType)))
+				return { error: 'Choose text, partySize, date, or time as responseType.' };
+			if (calendarView !== undefined && !['date', 'time'].includes(String(responseType)))
+				return { error: 'Calendars are only available for date or time questions.' };
 			if (calendarView !== undefined && !['month', 'day', 'time'].includes(String(calendarView)))
 				return { error: 'Choose month, day, or time for the calendar.' };
 			if (
@@ -224,6 +229,7 @@ export const capabilities: Record<string, Capability> = {
 			return {
 				kind: 'followup',
 				question: question.trim(),
+				responseType,
 				options: options ?? [],
 				...(calendarView ? { calendarView } : {}),
 				...(date ? { date } : {})
