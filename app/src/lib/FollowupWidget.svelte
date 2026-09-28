@@ -26,6 +26,7 @@
 <section class="w-full max-w-md space-y-3 self-end text-sm" aria-label="Follow-up response">
 	{#if calendarView}
 		<CalendarView
+			progressive
 			initialView={calendarView}
 			initialDate={date ?? todayString}
 			initialTime={time}

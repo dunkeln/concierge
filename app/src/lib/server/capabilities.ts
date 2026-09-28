@@ -197,7 +197,8 @@ export const capabilities: Record<string, Capability> = {
 			question: 'One concise question for the user',
 			responseType: 'text, partySize, date, or time: the missing detail this question asks for',
 			options: 'Optional array of up to four short answer choices; free text is always available',
-			calendarView: 'Optional month, day, or time when a calendar helps answer the question',
+			calendarView:
+				'Missing calendar detail: month if month is unknown, day if month is known but day is unknown, time if date is known but time is unknown. Shows only that picker; pass known date/time as presets.',
 			date: 'Known YYYY-MM-DD date from the conversation to open the calendar on',
 			time: 'Known local HH:mm time from the conversation to prefill the calendar'
 		},
@@ -219,6 +220,14 @@ export const capabilities: Record<string, Capability> = {
 				return { error: 'Calendars are only available for date or time questions.' };
 			if (calendarView !== undefined && !['month', 'day', 'time'].includes(String(calendarView)))
 				return { error: 'Choose month, day, or time for the calendar.' };
+			if (
+				calendarView !== undefined &&
+				((responseType === 'time' && calendarView !== 'time') ||
+					(responseType === 'date' && calendarView === 'time'))
+			)
+				return { error: 'Use time for time questions, or month/day for date questions.' };
+			if (calendarView === 'time' && date === undefined)
+				return { error: 'Provide the known date before asking for its time.' };
 			if (
 				date !== undefined &&
 				(typeof date !== 'string' ||

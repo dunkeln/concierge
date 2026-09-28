@@ -111,6 +111,8 @@ test('answers calendar and text questions without duplicate sends', async ({ pag
 		if (calls === 4) {
 			expect(body.messages.at(-1).parts[0].text).toBe('West Village');
 		}
+		if (calls === 10) expect(body.messages.at(-1).parts[0].text).toBe('2026-09');
+		if (calls === 12) expect(body.messages.at(-1).parts[0].text).toBe('2026-09-29');
 		const response = createUIMessageStreamResponse({
 			stream: createUIMessageStream({
 				execute: ({ writer }) => {
@@ -136,7 +138,7 @@ test('answers calendar and text questions without duplicate sends', async ({ pag
 							}
 						});
 					}
-					if ([1, 3, 5, 7].includes(calls)) {
+					if ([1, 3, 5, 7, 9, 11].includes(calls)) {
 						writer.write({
 							type: 'tool-input-available',
 							toolCallId: `followup-${calls}`,
@@ -148,10 +150,11 @@ test('answers calendar and text questions without duplicate sends', async ({ pag
 							toolCallId: `followup-${calls}`,
 							output: {
 								kind: 'followup',
-								responseType: calls === 7 ? 'partySize' : calls === 3 ? 'text' : 'time',
+								responseType:
+									calls >= 9 ? 'date' : calls === 7 ? 'partySize' : calls === 3 ? 'text' : 'time',
 								date: '2026-09-28',
 								time: '16:00',
-								calendarView: 'time',
+								calendarView: calls === 9 ? 'month' : calls === 11 ? 'day' : 'time',
 								question:
 									calls === 7
 										? 'How many guests?'
@@ -222,7 +225,9 @@ test('answers calendar and text questions without duplicate sends', async ({ pag
 	await page.getByRole('button', { name: 'New chat' }).click();
 	await page.getByLabel('Your reservation request').fill('Adjust September 28 at 4 pm.');
 	await page.getByRole('button', { name: 'Send message' }).click();
-	await expect(page.getByLabel('Date', { exact: true })).toHaveValue('2026-09-28');
+	await expect(page.getByLabel('Date', { exact: true })).toHaveCount(0);
+	await expect(page.getByRole('group', { name: 'Calendar view' })).toHaveCount(0);
+	await expect(page.getByText('Monday, September 28', { exact: true })).toBeVisible();
 	await expect(page.getByLabel('Time', { exact: true })).toHaveValue('16:00');
 	await page.getByRole('button', { name: 'Use time', exact: true }).click();
 	await expect(page.getByText('Selection received.')).toBeVisible();
@@ -235,6 +240,22 @@ test('answers calendar and text questions without duplicate sends', async ({ pag
 	await page.getByRole('button', { name: '2 guests', exact: true }).click();
 	await expect(page.getByText('Selection received.')).toBeVisible();
 	expect(calls).toBe(8);
+	await page.getByRole('button', { name: 'New chat' }).click();
+	await page.getByLabel('Your reservation request').fill('Help me choose a month.');
+	await page.getByRole('button', { name: 'Send message' }).click();
+	await expect(page.getByLabel('Month', { exact: true })).toHaveValue('2026-09');
+	await expect(page.getByLabel('Time', { exact: true })).toHaveCount(0);
+	await page.getByRole('button', { name: 'Use month', exact: true }).click();
+	await expect(page.getByText('Selection received.')).toBeVisible();
+	expect(calls).toBe(10);
+	await page.getByRole('button', { name: 'New chat' }).click();
+	await page.getByLabel('Your reservation request').fill('Which day in September?');
+	await page.getByRole('button', { name: 'Send message' }).click();
+	await expect(page.getByRole('group', { name: 'Calendar view' })).toHaveCount(0);
+	await expect(page.getByLabel('Daily calendar timeline')).toHaveCount(0);
+	await page.getByRole('button', { name: 'Tuesday, September 29, 2026', exact: true }).click();
+	await expect(page.getByText('Selection received.')).toBeVisible();
+	expect(calls).toBe(12);
 });
 
 test('expired reservation times require a new check', async ({ page }) => {

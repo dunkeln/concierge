@@ -7,6 +7,7 @@
 		initialView,
 		initialDate,
 		initialTime = '',
+		progressive = false,
 		verifiedDate,
 		choices = [],
 		selectedTime = null,
@@ -20,6 +21,7 @@
 		initialView: CalendarViewMode;
 		initialDate: string;
 		initialTime?: string;
+		progressive?: boolean;
 		verifiedDate?: string;
 		choices?: Choice[];
 		selectedTime?: string | null;
@@ -33,6 +35,9 @@
 	let view = $state<CalendarViewMode>(untrack(() => initialView));
 	let date = $state(untrack(() => initialDate));
 	let time = $state(untrack(() => initialTime));
+	$effect(() => {
+		if (progressive) view = initialView;
+	});
 	$effect(() => {
 		date = initialDate;
 	});
@@ -58,7 +63,7 @@
 	const title = $derived(
 		new Intl.DateTimeFormat(
 			undefined,
-			view === 'month'
+			view === 'month' || (progressive && view === 'day')
 				? { month: 'long', year: 'numeric' }
 				: { weekday: 'long', month: 'long', day: 'numeric' }
 		).format(new Date(`${date}T12:00:00`))
@@ -112,7 +117,8 @@
 	});
 	function move(amount: number) {
 		const current = new Date(`${date}T12:00:00`);
-		if (view === 'month') current.setMonth(current.getMonth() + amount, 1);
+		if (view === 'month' || (progressive && view === 'day'))
+			current.setMonth(current.getMonth() + amount, 1);
 		else current.setDate(current.getDate() + amount);
 		date = localDate(current);
 	}
@@ -126,35 +132,65 @@
 <div class="rounded-2xl border border-primary-foreground/15 bg-primary p-3 text-primary-foreground">
 	<div class="flex items-center justify-between gap-2">
 		<strong class="text-sm font-medium">{title}</strong>
-		<div class="flex gap-1">
+		{#if !progressive || view !== 'time'}<div class="flex gap-1">
+				<button
+					type="button"
+					{disabled}
+					aria-label="Previous {view === 'month' || (progressive && view === 'day')
+						? 'month'
+						: 'day'}"
+					class="grid size-11 place-items-center rounded-xl hover:bg-primary-foreground/10 focus-visible:outline-2 focus-visible:outline-ring"
+					onclick={() => move(-1)}>‹</button
+				><button
+					type="button"
+					{disabled}
+					aria-label="Next {view === 'month' || (progressive && view === 'day') ? 'month' : 'day'}"
+					class="grid size-11 place-items-center rounded-xl hover:bg-primary-foreground/10 focus-visible:outline-2 focus-visible:outline-ring"
+					onclick={() => move(1)}>›</button
+				>
+			</div>{/if}
+	</div>
+	{#if !progressive}<div
+			class="mb-3 flex rounded-xl bg-secondary p-1"
+			role="group"
+			aria-label="Calendar view"
+		>
+			{#each ['month', 'day', 'time'] as mode}<button
+					type="button"
+					aria-pressed={view === mode}
+					class="min-h-10 flex-1 rounded-lg text-xs font-medium capitalize focus-visible:outline-2 focus-visible:outline-ring aria-pressed:bg-primary-foreground/15"
+					onclick={() => (view = mode as CalendarViewMode)}>{mode}</button
+				>{/each}
+		</div>{/if}
+	{#if progressive && view === 'month'}
+		<div class="mt-3 flex items-end gap-2">
+			<label class="flex-1 text-xs text-primary-foreground/60"
+				>Month<input
+					type="month"
+					value={month}
+					{disabled}
+					onchange={(event) => {
+						if (event.currentTarget.value) date = `${event.currentTarget.value}-01`;
+					}}
+					class="mt-1 min-h-11 w-full rounded-xl border border-primary-foreground/20 bg-secondary px-3 text-base text-primary-foreground"
+				/></label
+			>
 			<button
 				type="button"
-				aria-label="Previous {view === 'month' ? 'month' : 'day'}"
-				class="grid size-11 place-items-center rounded-xl hover:bg-primary-foreground/10 focus-visible:outline-2 focus-visible:outline-ring"
-				onclick={() => move(-1)}>‹</button
-			><button
-				type="button"
-				aria-label="Next {view === 'month' ? 'month' : 'day'}"
-				class="grid size-11 place-items-center rounded-xl hover:bg-primary-foreground/10 focus-visible:outline-2 focus-visible:outline-ring"
-				onclick={() => move(1)}>›</button
+				{disabled}
+				onclick={() => onCommitDate(month)}
+				class="min-h-11 rounded-xl bg-primary-foreground px-3 text-sm font-medium text-primary disabled:opacity-50"
+				>Use month</button
 			>
 		</div>
-	</div>
-	<div class="mb-3 flex rounded-xl bg-secondary p-1" role="group" aria-label="Calendar view">
-		{#each ['month', 'day', 'time'] as mode}<button
-				type="button"
-				aria-pressed={view === mode}
-				class="min-h-10 flex-1 rounded-lg text-xs font-medium capitalize focus-visible:outline-2 focus-visible:outline-ring aria-pressed:bg-primary-foreground/15"
-				onclick={() => (view = mode as CalendarViewMode)}>{mode}</button
-			>{/each}
-	</div>
-	{#if view === 'month'}
+	{:else if view === 'month' || (progressive && view === 'day')}
 		<div class="grid grid-cols-7 gap-1 text-center text-xs" aria-label="{title} calendar">
 			{#each ['S', 'M', 'T', 'W', 'T', 'F', 'S'] as weekday}<span
 					class="py-2 text-primary-foreground/50">{weekday}</span
 				>{/each}
 			{#each cells as day, index (index)}{#if day > 0}{@const candidate = `${month}-${String(day).padStart(2, '0')}`}<button
 						type="button"
+						{disabled}
 						aria-label={new Intl.DateTimeFormat(undefined, { dateStyle: 'full' }).format(
 							new Date(`${candidate}T12:00:00`)
 						)}
@@ -162,7 +198,8 @@
 						class="flex min-h-11 flex-col items-center justify-center rounded-xl text-sm hover:bg-primary-foreground/10 focus-visible:outline-2 focus-visible:outline-ring aria-pressed:bg-primary-foreground aria-pressed:text-primary"
 						onclick={() => {
 							date = candidate;
-							view = 'day';
+							if (progressive) onCommitDate(candidate);
+							else view = 'day';
 						}}
 						>{day}<span
 							class="mt-0.5 size-1 rounded-full"
@@ -279,7 +316,7 @@
 				This time overlaps your calendar in the following two hours.
 			</p>{/if}
 	{/if}
-	{#if view !== 'month'}<div class="mt-3 flex items-center justify-between gap-2">
+	{#if !progressive && view !== 'month'}<div class="mt-3 flex items-center justify-between gap-2">
 			<input
 				type="date"
 				bind:value={date}
