@@ -376,7 +376,8 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 	const discovered = new Set<string>();
 	let awaitingFollowup = false;
 	let emitBrowserSession:
-		((event: { open: boolean; id: string; venue: string }) => Promise<void>) | undefined;
+		| ((event: { open: boolean; id: string; venue: string; pageId?: string }) => Promise<void>)
+		| undefined;
 	return Sentry.startSpanManual({ name: 'chat.intake', op: 'ai.stream' }, async (span, finish) => {
 		const modelSpans = new Map<string, ReturnType<typeof Sentry.startInactiveSpan>>();
 		const endTrace = () => {
@@ -431,11 +432,12 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 							if (
 								outcome.status !== 'checkout_ready' ||
 								typeof outcome.sessionId !== 'string' ||
+								typeof outcome.pageId !== 'string' ||
 								typeof outcome.expiresAt !== 'number'
 							)
 								return outcome;
-							const { sessionId, expiresAt, ...observation } = outcome;
-							const ticket = await new SignJWT({ sid: sessionId })
+							const { sessionId, pageId, expiresAt, ...observation } = outcome;
+							const ticket = await new SignJWT({ sid: sessionId, pid: pageId })
 								.setProtectedHeader({ alg: 'HS256' })
 								.setSubject(userId)
 								.setExpirationTime(expiresAt)
@@ -513,12 +515,12 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			stream: createUIMessageStream({
 				onError: publicStreamError,
 				execute({ writer }) {
-					emitBrowserSession = async ({ open, id, venue }) => {
+					emitBrowserSession = async ({ open, id, venue, pageId }) => {
 						if (!open) {
 							writer.write({ type: 'data-browser', data: { open, id }, transient: true });
 							return;
 						}
-						const ticket = await new SignJWT({ sid: id, scope: 'preview' })
+						const ticket = await new SignJWT({ sid: id, pid: pageId, scope: 'preview' })
 							.setProtectedHeader({ alg: 'HS256' })
 							.setSubject(userId)
 							.setExpirationTime(Math.floor(Date.now() / 1_000) + 120)

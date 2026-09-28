@@ -185,7 +185,12 @@ ${instruction}`,
 export async function findReservationPages(
 	input: ReservationQuery,
 	keys: { browserbase?: string },
-	onSession?: (event: { open: boolean; id: string; venue: string }) => Promise<void>
+	onSession?: (event: {
+		open: boolean;
+		id: string;
+		venue: string;
+		pageId?: string;
+	}) => Promise<void>
 ) {
 	const restaurantInput = typeof input.restaurant === 'string' ? input.restaurant.trim() : '';
 	const area = typeof input.area === 'string' ? input.area.trim() : '';
@@ -305,10 +310,6 @@ export async function findReservationPages(
 				return result;
 			}
 			browser = await browserbase.launch({ apiKey: browserbaseKey, api_timeout: 150 });
-			if (browser.sessionId)
-				await onSession?.({ open: true, id: browser.sessionId, venue: restaurant || area }).catch(
-					() => undefined
-				);
 			stage = 'attach';
 			stagehand = await Stagehand.create({
 				browser,
@@ -323,6 +324,13 @@ export async function findReservationPages(
 					const page = await browser.context.activePage();
 					if (!page) throw new Error('Reservation page unavailable');
 					await page.goto(candidate.url, { timeout: 20_000 });
+					if (browser.sessionId)
+						await onSession?.({
+							open: true,
+							id: browser.sessionId,
+							pageId: page.pageId,
+							venue: restaurant || area
+						}).catch(() => undefined);
 					stage = 'inspect';
 					const observed = await Sentry.startSpan(
 						{
@@ -542,6 +550,7 @@ Stop at the guest-details/review screen, or sooner if an action could complete a
 					experience: matching[0].name,
 					checkedAt: new Date().toISOString(),
 					sessionId: browser.sessionId,
+					pageId: currentPage.pageId,
 					expiresAt: sessionDeadline,
 					detail: 'Provider checkout reached. No guest details, payment, or booking were submitted.'
 				};

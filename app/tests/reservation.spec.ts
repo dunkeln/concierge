@@ -328,13 +328,25 @@ test('live reservation search reaches the checkout handoff', async ({ page }) =>
 		await expect(page.getByText('No booking was submitted.')).toBeVisible();
 		const href = (await checkout.getAttribute('href'))!;
 		const ticket = new URL(href, page.url()).searchParams.get('ticket');
-		sessionId = (decodeJwt(ticket!).sid as string | undefined) ?? undefined;
+		const claims = decodeJwt(ticket!);
+		sessionId = (claims.sid as string | undefined) ?? undefined;
+		expect(typeof claims.pid).toBe('string');
 		expect(sessionId).toBeTruthy();
 		const response = await page.request.get(href, {
 			maxRedirects: 0
 		});
 		expect(response.status()).toBe(302);
 		expect(new URL(response.headers().location).hostname).toMatch(/(^|\.)browserbase\.com$/);
+		const views = await new Browserbase({ apiKey: process.env.BROWSERBASE_API_KEY }).sessions.debug(
+			sessionId!
+		);
+		const expectedView = new URL(
+			views.pages.find((target) => target.id === claims.pid)!.debuggerFullscreenUrl
+		);
+		const actualView = new URL(response.headers().location);
+		expect(actualView.searchParams.get('wss')!.split('?')[0]).toBe(
+			expectedView.searchParams.get('wss')!.split('?')[0]
+		);
 	} finally {
 		await test.info().attach('reservation-transcript', {
 			body: await page.locator('main').innerText(),
